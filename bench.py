@@ -14,11 +14,11 @@ benchmark reports.
 
 Typical use::
 
-    uv run bench.py                          # run everything, open the page
-    uv run bench.py --runs 20 --mode generic # twenty process runs, generic only
-    uv run bench.py --format msgpack         # one format
-    uv run bench.py --output csv --output md # also write summary.csv / summary.md
-    python3 bench.py --plot-only             # rebuild the page from saved results
+    uv run bench.py                      # index.html + csv + md, opens the page
+    uv run bench.py --no-plot            # summary.csv + summary.md, no page
+    uv run bench.py --output csv         # only summary.csv
+    uv run bench.py --runs 20 --mode generic
+    python3 bench.py --plot-only         # rebuild outputs from saved results
 
 Raw per-process output and ``measurements.json`` are always kept under the
 result directory (``bench-results`` by default) for auditability; the page and
@@ -622,9 +622,14 @@ def parser() -> argparse.ArgumentParser:
         "--output",
         dest="exports",
         action="append",
-        choices=("csv", "md", "all"),
+        choices=("csv", "md"),
         default=None,
-        help="write summary.csv / summary.md instead of the page; all = csv + md (repeatable)",
+        help="write only the chosen summary file(s), without the page (repeatable)",
+    )
+    result.add_argument(
+        "--no-plot",
+        action="store_true",
+        help="write summary.csv and summary.md without the page",
     )
     result.add_argument(
         "--output-dir",
@@ -700,26 +705,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     ]
 
     written: list[Path] = []
-    exports = args.exports or ()
-    if "all" in exports:
-        exports = ("csv", "md")
-    for export in exports:
-        if export == "csv":
-            path = output_dir / "summary.csv"
-            write_csv(path, summary)
-        else:
-            path = output_dir / "summary.md"
-            write_markdown(path, summary, runs)
-        written.append(path)
+    if args.exports:
+        want_csv = "csv" in args.exports
+        want_md = "md" in args.exports
+        want_page = False
+    elif args.no_plot:
+        want_csv, want_md, want_page = True, True, False
+    else:
+        want_csv, want_md, want_page = True, True, True
 
-    page = output_dir / "index.html"
-    if not args.exports:
+    if want_csv:
+        path = output_dir / "summary.csv"
+        write_csv(path, summary)
+        written.append(path)
+    if want_md:
+        path = output_dir / "summary.md"
+        write_markdown(path, summary, runs)
+        written.append(path)
+    if want_page:
+        page = output_dir / "index.html"
         write_html_page(page, summary, runs)
         written.append(page)
 
     for path in written:
         print(f"wrote {path}")
-    if not args.exports:
+    if want_page:
         webbrowser.open(page.resolve().as_uri())
         print(f"opened {page} in your browser")
     return 0
