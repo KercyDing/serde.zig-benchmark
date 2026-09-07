@@ -622,9 +622,9 @@ def parser() -> argparse.ArgumentParser:
         "--output",
         dest="exports",
         action="append",
-        choices=("csv", "md"),
+        choices=("csv", "md", "all"),
         default=None,
-        help="also write summary.csv / summary.md next to the page (repeatable)",
+        help="write summary.csv / summary.md instead of the page; all = csv + md (repeatable)",
     )
     result.add_argument(
         "--output-dir",
@@ -652,7 +652,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--plot-only",
         action="store_true",
-        help="rebuild index.html and any --output exports from the saved measurements.json without running Zig",
+        help="rebuild the page or exports from the saved measurements.json without running Zig",
     )
     return result
 
@@ -700,7 +700,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     ]
 
     written: list[Path] = []
-    for export in args.exports or ():
+    exports = args.exports or ()
+    if "all" in exports:
+        exports = ("csv", "md")
+    for export in exports:
         if export == "csv":
             path = output_dir / "summary.csv"
             write_csv(path, summary)
@@ -710,13 +713,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         written.append(path)
 
     page = output_dir / "index.html"
-    write_html_page(page, summary, runs)
-    written.append(page)
+    if not args.exports:
+        write_html_page(page, summary, runs)
+        written.append(page)
 
     for path in written:
         print(f"wrote {path}")
-    webbrowser.open(page.resolve().as_uri())
-    print(f"opened {page} in your browser")
+    if not args.exports:
+        webbrowser.open(page.resolve().as_uri())
+        print(f"opened {page} in your browser")
     return 0
 
 

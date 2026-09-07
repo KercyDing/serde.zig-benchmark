@@ -31,7 +31,7 @@ uv run bench.py --plot-only
 
 - `--runs 20 --mode generic`: twenty process runs, generic representation only.
 - `--format msgpack`: benchmark one format.
-- `--output csv --output md`: also write summary tables.
+- `--output csv --output md`: write summary tables instead of the page.
 - `--plot-only`: rebuild the page from saved results without rerunning.
 
 Zig versions are managed with `mise`. The default is 0.16.0. Use
