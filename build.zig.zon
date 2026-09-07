@@ -5,7 +5,7 @@
     .minimum_zig_version = "0.17.0-dev.1963+e00c6c439",
     .dependencies = .{
         .serde = .{
-            .url = "git+https://github.com/OrlovEvgeny/serde.zig?ref=master#a79b68732e44fd3c422b8ecaacd2037affdced82",
+            .url = "https://github.com/OrlovEvgeny/serde.zig/archive/refs/tags/v1.0.8.tar.gz",
             .hash = "serde-1.0.1-1DszT2JXEAB-sGiDwF9QV_cy8XA4bBExZVnkn3hXzDCM",
         },
     },
