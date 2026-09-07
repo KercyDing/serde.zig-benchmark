@@ -344,7 +344,7 @@ def write_markdown(path: Path, rows: Sequence[dict[str, object]], runs: int) -> 
     lines = [
         "# serde.zig benchmark results",
         "",
-        f"Median of {runs} process run(s). Throughput is calculated from the median `ms/op`.",
+        f"serde.zig {serde_version()} · median of {runs} process run(s). Throughput is calculated from the median `ms/op`.",
         "JSON decode uses input bytes; MessagePack encode uses encoded output bytes.",
         "",
     ]
