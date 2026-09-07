@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.10"
-# dependencies = [
-#     "plotly",
-# ]
 # ///
 """Run the real-world serde.zig benchmark and open an interactive results page.
 
 The Zig programs already perform warmup and repeat each fixture according to
 its size.  This driver runs each selected target in separate processes, keeps
 the raw text for auditability, aggregates process runs by median, and renders
-one interactive web page (``bench-results/index.html``) with grouped bar
-charts for every format/mode and corpus file, then opens it in your browser.
+one web page (``bench-results/index.html``) with Highcharts column charts,
+then opens it in your browser. No Python chart library is needed; the page
+loads Highcharts from a CDN (first open requires network), like the yyjson
+benchmark reports.
 
 Typical use::
 
@@ -376,138 +375,199 @@ def load_summary(path: Path) -> tuple[list[dict[str, object]], int]:
     return rows, runs
 
 
-class MissingDependency(RuntimeError):
-    """Raised when a rendering dependency (plotly) is not installed."""
+HIGHCHARTS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/highcharts/8.2.0/"
+
+FORMAT_SERIES_ORDER = (
+    ("json", "generic"),
+    ("json", "typed"),
+    ("msgpack", "generic"),
+    ("msgpack", "typed"),
+)
+
+OP_SERIES_ORDER = (
+    ("decode", "generic"),
+    ("decode", "typed"),
+    ("encode", "generic"),
+    ("encode", "typed"),
+)
 
 
-CHART_COLORS = {
-    ("json", "generic"): "#ff1025",
-    ("json", "typed"): "#111111",
-    ("msgpack", "generic"): "#6d6900",
-    ("msgpack", "typed"): "#1639ef",
-}
-
-CHART_LABELS = {
-    ("json", "generic"): "JSON / generic",
-    ("json", "typed"): "JSON / typed",
-    ("msgpack", "generic"): "MessagePack / generic",
-    ("msgpack", "typed"): "MessagePack / typed",
-}
+def op_series_label(operation: str, mode: str) -> str:
+    return f"{operation} · {mode}"
 
 
 def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) -> None:
-    """Write a self-contained interactive page (plotly) with one chart per operation."""
-    try:
-        import plotly.graph_objects as go
-        import plotly.io as pio
-        from plotly.offline import get_plotlyjs
-    except ImportError as exc:
-        raise MissingDependency(
-            "the results page requires plotly; run with `uv run bench.py` "
-            "(uv installs it from the PEP 723 header) or `pip install plotly`"
-        ) from exc
+    """Write an interactive Highcharts page (library from CDN, like yyjson).
 
+    Layout: a centered JSON-vs-MessagePack decode comparison over the typed
+    corpus on top, then side-by-side JSON charts (typed corpus, generic-only
+    corpus), then side-by-side MessagePack charts. No Python chart library.
+    """
     by_key = {
         (str(row["format"]), str(row["mode"]), str(row["dataset"]), str(row["operation"])): row
         for row in rows
     }
-    datasets = [dataset for dataset in DATASETS if any(key[2] == dataset for key in by_key)]
+    chart_counter = 0
 
-    def figure_html(operation: str, group: list[str], heading: str) -> str | None:
-        short = [dataset.removesuffix(".json") for dataset in group]
-        available = [
-            series
-            for series in CHART_LABELS
-            if any((*series, dataset, operation) in by_key for dataset in group)
-        ]
-        if not available:
-            return None
-
-        fig = go.Figure()
-        for series in available:
-            throughput: list[float | None] = []
-            hover: list[list[float] | None] = []
-            for dataset in group:
-                row = by_key.get((*series, dataset, operation))
-                if row is None:
-                    throughput.append(None)
-                    hover.append(None)
-                else:
-                    throughput.append(float(row["throughput_gb_s"]))
-                    hover.append([float(row["median_ms"]), float(row["throughput_mib_s"])])
-            fig.add_trace(
-                go.Bar(
-                    name=CHART_LABELS[series],
-                    x=short,
-                    y=throughput,
-                    marker_color=CHART_COLORS[series],
-                    customdata=hover,
-                    hovertemplate=(
-                        "%{x}<br><b>%{y:.3f} GB/s</b>"
-                        "<br>median %{customdata[0]:.2f} ms"
-                        "<extra>%{fullData.name}</extra>"
-                    ),
-                )
-            )
-
-        fig.update_layout(
-            barmode="group",
-            xaxis=dict(title="corpus file", tickangle=-32),
-            yaxis=dict(title="throughput (GB/s)", rangemode="tozero"),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            template="plotly_white",
-            height=520,
-            margin=dict(l=72, r=24, t=32, b=110),
-        )
+    def chart_html(
+        datasets: list[str],
+        series: list[dict[str, object]],
+        height: int,
+        filename: str,
+    ) -> str:
+        nonlocal chart_counter
+        chart_counter += 1
+        container_id = f"chart-{chart_counter}"
+        categories = [dataset.removesuffix(".json") for dataset in datasets]
+        options = {
+            "chart": {
+                "type": "column",
+                "height": height,
+                "backgroundColor": "transparent",
+                "animation": True,
+            },
+            "title": {"text": None},
+            "credits": {"enabled": False},
+            "exporting": {"filename": filename},
+            "xAxis": {
+                "categories": categories,
+                "labels": {"rotation": -35, "style": {"fontSize": "11px"}},
+            },
+            "yAxis": {"title": {"text": "throughput (GB/s)"}, "min": 0},
+            "tooltip": {"shared": True, "valueDecimals": 3, "valueSuffix": " GB/s"},
+            "legend": {"layout": "horizontal", "align": "center", "verticalAlign": "top"},
+            "plotOptions": {"column": {"borderRadius": 3, "pointPadding": 0.06, "groupPadding": 0.2}},
+            "series": series,
+        }
         return (
-            "<section>\n"
-            f"<h2>{heading}</h2>\n"
-            f"{pio.to_html(fig, full_html=False, include_plotlyjs=False)}\n"
-            "</section>"
+            f'<div id="{container_id}" class="hc-container"></div>\n'
+            f"<script>Highcharts.chart({json.dumps(container_id)}, {json.dumps(options)});</script>\n"
         )
+
+    def series_points(
+        key_format: str,
+        key_mode: str,
+        operation: str,
+        datasets: list[str],
+    ) -> list[float | None]:
+        return [
+            None
+            if (key_format, key_mode, dataset, operation) not in by_key
+            else float(by_key[(key_format, key_mode, dataset, operation)]["throughput_gb_s"])
+            for dataset in datasets
+        ]
+
+    def collect_series(
+        series_specs: list[tuple[str, str, str, str, list[str]]],
+    ) -> list[dict[str, object]]:
+        result: list[dict[str, object]] = []
+        for name, key_format, key_mode, operation, datasets in series_specs:
+            result.append(
+                {
+                    "name": name,
+                    "data": series_points(key_format, key_mode, operation, datasets),
+                }
+            )
+        return result
+
+    def card(heading: str, plot: str) -> str:
+        return "<section class=\"plot\">\n" f"<h2>{heading}</h2>\n{plot}\n" "</section>"
+
+    # Top comparison: decode throughput, JSON vs MessagePack, typed corpus only.
+    compare_datasets = [
+        dataset
+        for dataset in DATASETS
+        if any((format_name, "typed", dataset, "decode") in by_key for format_name in FORMATS)
+    ]
+    compare_series = collect_series(
+        [
+            (
+                f"{FORMAT_LABELS[format_name]} / {mode}",
+                format_name,
+                mode,
+                "decode",
+                compare_datasets,
+            )
+            for format_name, mode in FORMAT_SERIES_ORDER
+            if any((format_name, mode, dataset, "decode") in by_key for dataset in compare_datasets)
+        ]
+    )
 
     sections: list[str] = []
-    for operation in OPERATIONS:
-        typed = [
+    if compare_series:
+        sections.append(card(
+            "JSON vs MessagePack — typed corpus (decode)",
+            chart_html(compare_datasets, compare_series, 460, "json-vs-msgpack"),
+        ))
+
+    # Two cards per format, one after the other.
+    for format_name in FORMATS:
+        label = FORMAT_LABELS[format_name]
+        group_datasets = [
             dataset
-            for dataset in datasets
+            for dataset in DATASETS
             if any(
-                (format_name, "typed", dataset, operation) in by_key
-                for format_name in FORMATS
+                (format_name, mode, dataset, operation) in by_key
+                for mode in MODES
+                for operation in OPERATIONS
             )
         ]
-        generic_only = [dataset for dataset in datasets if dataset not in typed]
+        if not group_datasets:
+            continue
+        typed = [
+            dataset
+            for dataset in group_datasets
+            if any((format_name, "typed", dataset, operation) in by_key for operation in OPERATIONS)
+        ]
+        generic_only = [dataset for dataset in group_datasets if dataset not in typed]
         for group, corpus in ((typed, "typed corpus"), (generic_only, "generic-only corpus")):
-            html = figure_html(operation, group, f"{operation.title()} throughput — {corpus}")
-            if html is not None:
-                sections.append(html)
+            if not group:
+                continue
+            series = collect_series(
+                [
+                    (
+                        op_series_label(operation, mode),
+                        format_name,
+                        mode,
+                        operation,
+                        group,
+                    )
+                    for operation, mode in OP_SERIES_ORDER
+                    if any((format_name, mode, dataset, operation) in by_key for dataset in group)
+                ]
+            )
+            if series:
+                stem = corpus.split()[0]
+                sections.append(
+                    card(
+                        f"{label} — {corpus}",
+                        chart_html(group, series, 430, f"{format_name}-{stem}"),
+                    )
+                )
 
     if not sections:
         raise RuntimeError("no measurements to chart for the selected formats/modes")
 
     body = "\n".join(sections)
-    plotly_js = get_plotlyjs().replace("</script>", "<\\/script>")
-    note = (
-        f"Median of {runs} process run(s); the timed path excludes file loading "
-        "and cleanup. JSON decode throughput uses the JSON input size; "
-        "MessagePack encode uses the encoded output size. Typed mode is measured "
-        "only where the corpus has a static schema; the other files are shown "
-        "separately as generic-only."
-    )
+    note = f"Median of {runs} process run(s); the timed path excludes file loading and cleanup."
     html = f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <title>serde.zig benchmark</title>
+<script src="{HIGHCHARTS_CDN}highcharts.js"></script>
+<script src="{HIGHCHARTS_CDN}modules/exporting.js"></script>
+<script src="{HIGHCHARTS_CDN}modules/offline-exporting.js"></script>
 <style>
-  body {{ font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 24px 32px 48px; color: #222; }}
-  header h1 {{ margin: 0 0 6px; font-size: 24px; }}
-  header p  {{ margin: 0 0 8px; color: #555; font-size: 14px; max-width: 72em; }}
-  h2 {{ font-size: 18px; border-bottom: 1px solid #e5e5e5; padding-bottom: 6px; }}
-  section {{ margin-top: 30px; }}
-  footer {{ margin-top: 48px; color: #999; font-size: 12px; }}
+  body {{ font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 24px 32px 48px; background: #f3f6f9; color: #1f2733; }}
+  header {{ max-width: 1000px; margin: 0 auto 22px; }}
+  header h1 {{ margin: 0 0 6px; font-size: 24px; color: #141a23; }}
+  header p  {{ margin: 0; color: #4a5568; font-size: 14px; }}
+  h2 {{ font-size: 16px; margin: 0 0 12px; color: #141a23; }}
+  section.plot {{ max-width: 1000px; margin: 0 auto 28px; background: #ffffff; border-radius: 12px; padding: 16px 20px; box-shadow: 0 1px 3px rgba(16, 24, 40, 0.08); }}
+  .hc-container {{ width: 100%; }}
+  footer {{ max-width: 1000px; margin: 4px auto 0; color: #718096; font-size: 12px; }}
 </style>
-<script>{plotly_js}</script>
 </head>
 <body>
 <header>
@@ -520,6 +580,7 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
 </html>
 """
     path.write_text(html, encoding="utf-8")
+
 
 
 def parser() -> argparse.ArgumentParser:
@@ -634,23 +695,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         written.append(path)
 
     page = output_dir / "index.html"
-    page_ready = False
-    try:
-        write_html_page(page, summary, runs)
-    except MissingDependency as exc:
-        if args.exports:
-            print(f"bench.py: warning: {exc}; exports written without the page", file=sys.stderr)
-        else:
-            raise
-    else:
-        page_ready = True
-        written.append(page)
+    write_html_page(page, summary, runs)
+    written.append(page)
 
     for path in written:
         print(f"wrote {path}")
-    if page_ready:
-        webbrowser.open(page.resolve().as_uri())
-        print(f"opened {page} in your browser")
+    webbrowser.open(page.resolve().as_uri())
+    print(f"opened {page} in your browser")
     return 0
 
 
