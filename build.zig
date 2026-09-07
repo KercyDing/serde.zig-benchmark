@@ -2,7 +2,7 @@ const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-    const optimize = b.option(std.builtin.Optimize, "optimize", "Optimization mode") orelse .fast;
+    const optimize = b.standardOptimizeOption(.{});
     const BenchMode = enum { generic, typed };
     const mode = b.option(BenchMode, "mode", "Benchmark representation: generic or typed") orelse .generic;
 

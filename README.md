@@ -1,25 +1,46 @@
 # serde.zig benchmark
 
-This repository measures `serde.zig` against real-world JSON documents, not
-the small synthetic fixtures in `serde.zig`'s internal microbenchmarks.
+Real-world benchmarks of `serde.zig` on JSON and MessagePack files.
 
-The corpus contains Canada geo data, CITM catalog data, FGO data, GitHub event
-data, Lottie, OTF font data, poetry, and Twitter documents. Each JSON input has
-a semantically equivalent MessagePack file in `data/msgpack/`; the benchmark
-reads that binary input directly, so MessagePack decoding and encoding timings
-do not include JSON parsing or JSON-to-MessagePack conversion.
+## Quick start
 
-Run the JSON benchmarks:
+Install the Zig version pinned in `mise.toml`, then run:
 
 ```sh
-zig build bench-json
+mise install
+uv run bench.py
 ```
 
-Run the MessagePack benchmarks:
+`uv run bench.py` runs all benchmarks and opens an interactive
+`bench-results/index.html` in your browser. It builds with
+`-Doptimize=ReleaseFast` and installs plotly automatically. Raw data stays in
+`bench-results/`.
+
+Examples:
 
 ```sh
-zig build bench-msgpack
+uv run bench.py --runs 5 --mode generic
+uv run bench.py --format msgpack
+uv run bench.py --output csv --output md
+uv run bench.py --plot-only
 ```
 
-Both targets default to the complete generic corpus. Use `-Dmode=typed` for
-the typed subset. MessagePack runs always report both decoding and encoding.
+- `--runs 5 --mode generic`: five runs, generic representation only.
+- `--format msgpack`: benchmark one format.
+- `--output csv --output md`: also write summary tables.
+- `--plot-only`: rebuild the page from saved results without rerunning.
+
+Zig versions are managed with `mise`. The default is 0.16.0. Use
+`mise -E zig17 exec -- uv run bench.py` for the dev toolchain.
+
+## Running zig build directly
+
+Use `-Doptimize=ReleaseFast`; the default is Debug, which is useless for
+timing.
+
+```sh
+zig build bench-json -Doptimize=ReleaseFast
+zig build bench-msgpack -Doptimize=ReleaseFast
+```
+
+`-Dmode=typed` selects the typed subset.

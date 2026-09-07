@@ -1,0 +1,31 @@
+[tools]
+zig = "0.16.0"
+
+[tasks.fmt]
+run = "zig fmt --check src/ bench/ build.zig"
+
+[tasks.build]
+run = "zig build"
+
+[tasks.test]
+run = "zig build test"
+
+[tasks.fuzz]
+run = "zig build fuzz"
+
+[tasks.ci]
+run = [
+    { task = "fmt" },
+    { task = "build" },
+    { task = "test" },
+    { task = "fuzz" },
+]
+
+[tasks.ci-15]
+run = "mise -E zig15 run ci"
+
+[tasks.ci-16]
+run = "mise -E zig16 run ci"
+
+[tasks.ci-17]
+run = "mise -E zig17 run ci"
