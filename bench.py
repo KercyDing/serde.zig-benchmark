@@ -47,6 +47,17 @@ from typing import Iterable, Sequence
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_OUTPUT = ROOT / "bench-results"
+
+
+def serde_version() -> str:
+    """Read the pinned serde.zig tag from the build.zig.zon dependency URL."""
+    root_zon = (ROOT / "build.zig.zon").read_text(encoding="utf-8")
+    if match := re.search(r"tags/(v[0-9]+(?:\.[0-9]+)*)", root_zon):
+        return match.group(1)
+    if match := re.search(r"ref=([A-Za-z0-9_.-]+)", root_zon):
+        return match.group(1)
+    return "unknown"
+
 DATASETS = (
     "canada.json",
     "citm_catalog.json",
@@ -549,7 +560,10 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
         raise RuntimeError("no measurements to chart for the selected formats/modes")
 
     body = "\n".join(sections)
-    note = f"Median of {runs} process run(s); the timed path excludes file loading and cleanup."
+    note = (
+        f"Median of {runs} process run(s) · serde.zig {serde_version()} · "
+        "timed path excludes file loading and cleanup."
+    )
     html = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -661,6 +675,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         metadata = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "project_root": str(ROOT),
+            "serde": serde_version(),
             "python": platform.python_version(),
             "platform": platform.platform(),
             "runs": args.runs,
