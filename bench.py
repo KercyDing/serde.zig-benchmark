@@ -464,7 +464,7 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
         sections.append(
             "<section>\n"
             f"<h2>{operation.title()} throughput</h2>\n"
-            f"{pio.to_html(fig, full_html=False, include_plotlyjs=False)}\n"
+            f"{pio.to_html(fig, full_html=False, include_plotlyjs=False, config={'filename': operation})}\n"
             "</section>"
         )
 
