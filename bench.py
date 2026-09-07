@@ -15,7 +15,7 @@ benchmark reports.
 Typical use::
 
     uv run bench.py                          # run everything, open the page
-    uv run bench.py --runs 5 --mode generic  # five process runs, generic only
+    uv run bench.py --runs 20 --mode generic # twenty process runs, generic only
     uv run bench.py --format msgpack         # one format
     uv run bench.py --output csv --output md # also write summary.csv / summary.md
     python3 bench.py --plot-only             # rebuild the page from saved results
@@ -601,8 +601,8 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--runs",
         type=positive_int,
-        default=3,
-        help="independent process runs per format/mode (default: 3)",
+        default=10,
+        help="independent process runs per format/mode (default: 10)",
     )
     result.add_argument(
         "--output",

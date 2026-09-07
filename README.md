@@ -23,13 +23,13 @@ datasets).
 Examples:
 
 ```sh
-uv run bench.py --runs 5 --mode generic
+uv run bench.py --runs 20 --mode generic
 uv run bench.py --format msgpack
 uv run bench.py --output csv --output md
 uv run bench.py --plot-only
 ```
 
-- `--runs 5 --mode generic`: five runs, generic representation only.
+- `--runs 20 --mode generic`: twenty process runs, generic representation only.
 - `--format msgpack`: benchmark one format.
 - `--output csv --output md`: also write summary tables.
 - `--plot-only`: rebuild the page from saved results without rerunning.
