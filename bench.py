@@ -453,7 +453,7 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
 
         fig.update_layout(
             barmode="group",
-            title=dict(text=f"serde.zig {operation} throughput on real-world corpus", x=0.0),
+            title=dict(text=f"{operation.title()} throughput", x=0.0),
             xaxis=dict(title="corpus file", tickangle=-32),
             yaxis=dict(title="throughput (GB/s)", rangemode="tozero"),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
@@ -464,7 +464,7 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
         sections.append(
             "<section>\n"
             f"<h2>{operation.title()} throughput</h2>\n"
-            f"{pio.to_html(fig, full_html=False, include_plotlyjs=False, config={'filename': operation})}\n"
+            f"{pio.to_html(fig, full_html=False, include_plotlyjs=False)}\n"
             "</section>"
         )
 
@@ -482,7 +482,7 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>serde.zig real-world benchmark</title>
+<title>serde.zig benchmark</title>
 <style>
   body {{ font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 24px 32px 48px; color: #222; }}
   header h1 {{ margin: 0 0 6px; font-size: 24px; }}
