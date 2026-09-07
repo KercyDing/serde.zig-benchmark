@@ -1,0 +1,19 @@
+.{
+    .name = .benchmarks,
+    .version = "0.0.1",
+    .fingerprint = 0x41bc1c58c2f47e93,
+    .minimum_zig_version = "0.17.0-dev.1963+e00c6c439",
+    .dependencies = .{
+        .serde = .{
+            .url = "git+https://github.com/OrlovEvgeny/serde.zig?ref=master#a79b68732e44fd3c422b8ecaacd2037affdced82",
+            .hash = "serde-1.0.1-1DszT2JXEAB-sGiDwF9QV_cy8XA4bBExZVnkn3hXzDCM",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "bench",
+        "data/json",
+        "data/msgpack",
+    },
+}
