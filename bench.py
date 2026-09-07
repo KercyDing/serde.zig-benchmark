@@ -412,23 +412,22 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
         for row in rows
     }
     datasets = [dataset for dataset in DATASETS if any(key[2] == dataset for key in by_key)]
-    short_names = [dataset.removesuffix(".json") for dataset in datasets]
 
-    sections: list[str] = []
-    for operation in OPERATIONS:
+    def figure_html(operation: str, group: list[str], heading: str) -> str | None:
+        short = [dataset.removesuffix(".json") for dataset in group]
         available = [
             series
             for series in CHART_LABELS
-            if any((*series, dataset, operation) in by_key for dataset in datasets)
+            if any((*series, dataset, operation) in by_key for dataset in group)
         ]
         if not available:
-            continue
+            return None
 
         fig = go.Figure()
         for series in available:
             throughput: list[float | None] = []
             hover: list[list[float] | None] = []
-            for dataset in datasets:
+            for dataset in group:
                 row = by_key.get((*series, dataset, operation))
                 if row is None:
                     throughput.append(None)
@@ -439,7 +438,7 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
             fig.add_trace(
                 go.Bar(
                     name=CHART_LABELS[series],
-                    x=short_names,
+                    x=short,
                     y=throughput,
                     marker_color=CHART_COLORS[series],
                     customdata=hover,
@@ -453,20 +452,35 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
 
         fig.update_layout(
             barmode="group",
-            title=dict(text=f"{operation.title()} throughput", x=0.0),
             xaxis=dict(title="corpus file", tickangle=-32),
             yaxis=dict(title="throughput (GB/s)", rangemode="tozero"),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             template="plotly_white",
-            height=560,
-            margin=dict(l=72, r=24, t=80, b=110),
+            height=520,
+            margin=dict(l=72, r=24, t=32, b=110),
         )
-        sections.append(
+        return (
             "<section>\n"
-            f"<h2>{operation.title()} throughput</h2>\n"
+            f"<h2>{heading}</h2>\n"
             f"{pio.to_html(fig, full_html=False, include_plotlyjs=False)}\n"
             "</section>"
         )
+
+    sections: list[str] = []
+    for operation in OPERATIONS:
+        typed = [
+            dataset
+            for dataset in datasets
+            if any(
+                (format_name, "typed", dataset, operation) in by_key
+                for format_name in FORMATS
+            )
+        ]
+        generic_only = [dataset for dataset in datasets if dataset not in typed]
+        for group, corpus in ((typed, "typed corpus"), (generic_only, "generic-only corpus")):
+            html = figure_html(operation, group, f"{operation.title()} throughput — {corpus}")
+            if html is not None:
+                sections.append(html)
 
     if not sections:
         raise RuntimeError("no measurements to chart for the selected formats/modes")
@@ -476,7 +490,9 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
     note = (
         f"Median of {runs} process run(s); the timed path excludes file loading "
         "and cleanup. JSON decode throughput uses the JSON input size; "
-        "MessagePack encode uses the encoded output size."
+        "MessagePack encode uses the encoded output size. Typed mode is measured "
+        "only where the corpus has a static schema; the other files are shown "
+        "separately as generic-only."
     )
     html = f"""<!doctype html>
 <html lang="en">

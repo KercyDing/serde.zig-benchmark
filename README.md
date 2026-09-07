@@ -14,7 +14,8 @@ uv run bench.py
 `uv run bench.py` runs all benchmarks and opens an interactive
 `bench-results/index.html` in your browser. It builds with
 `-Doptimize=ReleaseFast` and installs plotly automatically. Raw data stays in
-`bench-results/`.
+`bench-results/`. Corpora with a static typed schema get their own charts; the
+rest are shown separately as generic-only.
 
 Examples:
 
