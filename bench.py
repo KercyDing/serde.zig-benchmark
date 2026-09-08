@@ -22,9 +22,9 @@ Typical use::
 
 Raw per-process output and ``measurements.json`` are always kept under the
 result directory (``bench-results`` by default) for auditability; the page and
-the optional CSV/Markdown exports are derived from them. JSON decode
-throughput uses the JSON input size; MessagePack encode uses the encoded
-output size, matching the benchmark implementation.
+the optional CSV/Markdown exports are derived from them. Decode throughput
+uses input bytes; encode throughput uses encoded output bytes, matching the
+benchmark implementation.
 """
 
 from __future__ import annotations
@@ -190,8 +190,7 @@ def parse_output(output: str, format_name: str, mode: str, run: int) -> list[Mea
 
 def expected_measurements(format_name: str, mode: str) -> set[tuple[str, str]]:
     datasets = TYPED_DATASETS if mode == "typed" else frozenset(DATASETS)
-    operations = ("decode",) if format_name == "json" else OPERATIONS
-    return {(dataset, operation) for dataset in datasets for operation in operations}
+    return {(dataset, operation) for dataset in datasets for operation in OPERATIONS}
 
 
 def validate_measurements(measurements: Sequence[Measurement], format_name: str, mode: str) -> None:
@@ -345,7 +344,7 @@ def write_markdown(path: Path, rows: Sequence[dict[str, object]], runs: int) -> 
         "# serde.zig benchmark results",
         "",
         f"serde.zig {serde_version()} · median of {runs} process run(s). Throughput is calculated from the median `ms/op`.",
-        "JSON decode uses input bytes; MessagePack encode uses encoded output bytes.",
+        "Decode throughput uses input bytes; encode throughput uses encoded output bytes.",
         "",
     ]
     for operation in OPERATIONS:
@@ -395,24 +394,12 @@ FORMAT_SERIES_ORDER = (
     ("msgpack", "typed"),
 )
 
-OP_SERIES_ORDER = (
-    ("decode", "generic"),
-    ("decode", "typed"),
-    ("encode", "generic"),
-    ("encode", "typed"),
-)
-
-
-def op_series_label(operation: str, mode: str) -> str:
-    return f"{operation} · {mode}"
-
-
 def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) -> None:
     """Write an interactive Highcharts page (library from CDN, like yyjson).
 
-    Layout: a centered JSON-vs-MessagePack decode comparison over the typed
-    corpus on top, then side-by-side JSON charts (typed corpus, generic-only
-    corpus), then side-by-side MessagePack charts. No Python chart library.
+    Layout: JSON-vs-MessagePack encode and decode comparisons over the shared
+    typed corpus on top, followed by encode and decode charts for each format.
+    No Python chart library.
     """
     by_key = {
         (str(row["format"]), str(row["mode"]), str(row["dataset"]), str(row["operation"])): row
@@ -484,34 +471,35 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
     def card(heading: str, plot: str) -> str:
         return "<section class=\"plot\">\n" f"<h2>{heading}</h2>\n{plot}\n" "</section>"
 
-    # Top comparison: decode throughput, JSON vs MessagePack, typed corpus only.
+    # Top comparisons use only datasets with typed models in both formats.
     compare_datasets = [
         dataset
         for dataset in DATASETS
         if any((format_name, "typed", dataset, "decode") in by_key for format_name in FORMATS)
     ]
-    compare_series = collect_series(
-        [
-            (
-                f"{FORMAT_LABELS[format_name]} / {mode}",
-                format_name,
-                mode,
-                "decode",
-                compare_datasets,
-            )
-            for format_name, mode in FORMAT_SERIES_ORDER
-            if any((format_name, mode, dataset, "decode") in by_key for dataset in compare_datasets)
-        ]
-    )
 
     sections: list[str] = []
-    if compare_series:
-        sections.append(card(
-            "JSON vs MessagePack — typed corpus (decode)",
-            chart_html(compare_datasets, compare_series, 460, "json-vs-msgpack"),
-        ))
+    for operation in OPERATIONS:
+        compare_series = collect_series(
+            [
+                (
+                    f"{FORMAT_LABELS[format_name]} / {mode}",
+                    format_name,
+                    mode,
+                    operation,
+                    compare_datasets,
+                )
+                for format_name, mode in FORMAT_SERIES_ORDER
+                if any((format_name, mode, dataset, operation) in by_key for dataset in compare_datasets)
+            ]
+        )
+        if compare_series:
+            sections.append(card(
+                f"JSON vs MessagePack — shared typed datasets ({operation})",
+                chart_html(compare_datasets, compare_series, 460, f"json-vs-msgpack-{operation}"),
+            ))
 
-    # Two cards per format, one after the other.
+    # One encode and one decode card for each format.
     for format_name in FORMATS:
         label = FORMAT_LABELS[format_name]
         group_datasets = [
@@ -525,34 +513,25 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
         ]
         if not group_datasets:
             continue
-        typed = [
-            dataset
-            for dataset in group_datasets
-            if any((format_name, "typed", dataset, operation) in by_key for operation in OPERATIONS)
-        ]
-        generic_only = [dataset for dataset in group_datasets if dataset not in typed]
-        for group, corpus in ((typed, "typed corpus"), (generic_only, "generic-only corpus")):
-            if not group:
-                continue
+        for operation in OPERATIONS:
             series = collect_series(
                 [
                     (
-                        op_series_label(operation, mode),
+                        mode,
                         format_name,
                         mode,
                         operation,
-                        group,
+                        group_datasets,
                     )
-                    for operation, mode in OP_SERIES_ORDER
-                    if any((format_name, mode, dataset, operation) in by_key for dataset in group)
+                    for mode in MODES
+                    if any((format_name, mode, dataset, operation) in by_key for dataset in group_datasets)
                 ]
             )
             if series:
-                stem = corpus.split()[0]
                 sections.append(
                     card(
-                        f"{label} — {corpus}",
-                        chart_html(group, series, 430, f"{format_name}-{stem}"),
+                        f"{label} — {operation}",
+                        chart_html(group_datasets, series, 430, f"{format_name}-{operation}"),
                     )
                 )
 

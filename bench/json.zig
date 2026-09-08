@@ -70,6 +70,30 @@ const GenericValue = union(enum) {
             else => error.WrongType,
         };
     }
+
+    pub fn zerdeSerialize(self: GenericValue, serializer: anytype) @TypeOf(serializer.*).Error!void {
+        switch (self) {
+            .null => try serializer.serializeNull(),
+            .bool => |value| try serializer.serializeBool(value),
+            .number => |value| switch (value) {
+                .int => |number| try serializer.serializeInt(number),
+                .uint => |number| try serializer.serializeInt(number),
+                .float => |number| try serializer.serializeFloat(number),
+                .raw => unreachable,
+            },
+            .string => |value| try serializer.serializeString(value),
+            .array => |values| {
+                var array = try serializer.beginArray();
+                for (values) |value| try value.zerdeSerialize(&array);
+                try array.end();
+            },
+            .object => |fields| {
+                var object = try serializer.beginStruct();
+                for (fields) |field| try object.serializeEntry(field.key, field.value);
+                try object.end();
+            },
+        }
+    }
 };
 
 const TwitterUser = struct {
@@ -162,8 +186,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
         std.debug.print("\n{s} ({d} bytes, {d} repeats)\n", .{ name, input.len, repeats });
         if (mode == .generic) {
             try runDecode(GenericValue, "serde generic decode", input, repeats);
+            try runEncode(GenericValue, "serde generic encode", input, repeats);
         } else {
             try runTyped(name, input, repeats);
+            try runTypedEncode(name, input, repeats);
         }
     }
 }
@@ -231,6 +257,14 @@ fn runTyped(name: []const u8, input: []const u8, repeats: usize) !void {
     return error.InvalidArguments;
 }
 
+fn runTypedEncode(name: []const u8, input: []const u8, repeats: usize) !void {
+    if (std.mem.eql(u8, name, "canada.json")) return runEncode(CanadaDocument, "serde typed encode", input, repeats);
+    if (std.mem.eql(u8, name, "github_events.json")) return runEncode([]const GithubEvent, "serde typed encode", input, repeats);
+    if (std.mem.eql(u8, name, "poet.json")) return runEncode([]const Poem, "serde typed encode", input, repeats);
+    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runEncode(TwitterDocument, "serde typed encode", input, repeats);
+    return error.InvalidArguments;
+}
+
 fn runDecode(comptime T: type, name: []const u8, input: []const u8, repeats: usize) !void {
     var warmup_arena = std.heap.ArenaAllocator.init(input_allocator);
     defer warmup_arena.deinit();
@@ -253,6 +287,34 @@ fn runDecode(comptime T: type, name: []const u8, input: []const u8, repeats: usi
         name,
         @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(repeats)) / std.time.ns_per_ms,
         total_bytes / seconds / (1024.0 * 1024.0),
+    });
+}
+
+fn runEncode(comptime T: type, name: []const u8, input: []const u8, repeats: usize) !void {
+    var fixture_arena = std.heap.ArenaAllocator.init(input_allocator);
+    defer fixture_arena.deinit();
+    const value = try serde.json.fromSlice(T, fixture_arena.allocator(), input);
+
+    const warmup = try serde.json.toSlice(input_allocator, value);
+    defer input_allocator.free(warmup);
+
+    var elapsed: u64 = 0;
+    for (0..repeats) |_| {
+        const start = nowNanoseconds();
+        const encoded = try serde.json.toSlice(input_allocator, value);
+        const end = nowNanoseconds();
+        std.mem.doNotOptimizeAway(encoded.ptr);
+        input_allocator.free(encoded);
+        elapsed += @max(end - start, 1);
+    }
+
+    const total_bytes: f64 = @floatFromInt(warmup.len * repeats);
+    const seconds: f64 = @as(f64, @floatFromInt(elapsed)) / std.time.ns_per_s;
+    std.debug.print("  {s}: {d:.6} ms/op, {d:.2} MiB/s ({d} bytes)\n", .{
+        name,
+        @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(repeats)) / std.time.ns_per_ms,
+        total_bytes / seconds / (1024.0 * 1024.0),
+        warmup.len,
     });
 }
 
