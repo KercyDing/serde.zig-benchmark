@@ -502,7 +502,7 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
     # One encode and one decode card for each format.
     for format_name in FORMATS:
         label = FORMAT_LABELS[format_name]
-        group_datasets = [
+        available_datasets = [
             dataset
             for dataset in DATASETS
             if any(
@@ -511,6 +511,19 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
                 for operation in OPERATIONS
             )
         ]
+        group_datasets = [
+            dataset
+            for dataset in available_datasets
+            if any(
+                (format_name, "typed", dataset, operation) in by_key
+                for operation in OPERATIONS
+            )
+        ]
+        group_datasets.extend(
+            dataset
+            for dataset in available_datasets
+            if dataset not in group_datasets
+        )
         if not group_datasets:
             continue
         for operation in OPERATIONS:
