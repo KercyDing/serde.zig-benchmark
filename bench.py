@@ -635,6 +635,14 @@ def parser() -> argparse.ArgumentParser:
         default=10,
         help="independent process runs per format (default: 10)",
     )
+    result.add_argument(
+        "--output",
+        dest="exports",
+        action="append",
+        choices=("csv", "md"),
+        default=None,
+        help="write only the chosen summary file(s), without the page (repeatable)",
+    )
     return result
 
 
