@@ -19,12 +19,13 @@ mise install
 
 ### `bench.py`
 
-`uv run bench/bench.py` runs every format and representation (generic and typed),
-writes `index.html`, `summary.csv`, and `summary.md` to
-`results/single_thread/`, then opens the page in your browser.
+`uv run bench/bench.py` runs every format, writes `index.html`,
+`summary.csv`, and `summary.md` to `results/single_thread/`, then opens the
+page in your browser.
 
-Results are organized by format and representation family (generic / typed),
-each with roundtrip, decode, and encode charts. It builds with
+Results are grouped by user task (encode known data, decode known data, load
+arbitrary data, transform data) per format; each task only includes the
+libraries that can complete it with their native API. It builds with
 `-Doptimize=ReleaseFast` and has no Python dependencies. The page loads
 Highcharts from a CDN, so the first open needs network.
 

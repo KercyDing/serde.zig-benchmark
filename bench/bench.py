@@ -63,6 +63,15 @@ TYPED_DATASETS = frozenset(
 FORMATS = ("json", "msgpack")
 MODES = ("generic", "typed")
 OPERATIONS = ("roundtrip", "decode", "encode")
+# User-facing tasks. Each task runs in the representation each library
+# naturally supports (typed structs or generic values).
+TASK_SPECS = (
+    ("Encode known data", "typed", "encode"),
+    ("Decode known data", "typed", "decode"),
+    ("Load arbitrary data", "generic", "decode"),
+    ("Transform known data", "typed", "roundtrip"),
+    ("Transform arbitrary data", "generic", "roundtrip"),
+)
 FORMAT_LABELS = {"json": "JSON", "msgpack": "MessagePack"}
 IMPLEMENTATIONS = ("serde", "std.json")
 MSGPACK_IMPLEMENTATIONS = ("serde", "msgpack.zig", "zig-msgpack")
@@ -391,14 +400,10 @@ def write_csv(path: Path, rows: Sequence[SummaryRow]) -> None:
 
 
 def write_markdown(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
-    by_key = {(str(row["format"]), str(row["implementation"]), str(row["mode"]), str(row["dataset"]), str(row["operation"])): row for row in rows}
-    series_order = [
-        (format_name, implementation, mode)
-        for format_name in FORMATS
-        for implementation in implementations_for_format(format_name)
-        for mode in supported_modes(format_name, implementation)
-    ]
-    datasets = [dataset for dataset in DATASETS if any(key[3] == dataset for key in by_key)]
+    by_key = {
+        (str(row["format"]), str(row["implementation"]), str(row["mode"]), str(row["dataset"]), str(row["operation"])): row
+        for row in rows
+    }
 
     lines = [
         "# serde.zig benchmark results",
@@ -407,31 +412,38 @@ def write_markdown(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
         "Decode throughput uses input bytes; encode throughput uses encoded output bytes.",
         "",
     ]
-    for operation in OPERATIONS:
-        available = [
-            (format_name, implementation, mode)
-            for format_name, implementation, mode in series_order
-            if any((format_name, implementation, mode, dataset, operation) in by_key for dataset in datasets)
-        ]
-        if not available:
-            continue
-        lines.extend(
-            [
-                f"## {operation.title()} throughput",
-                "",
-                "| Dataset | "
-                + " | ".join(f"{FORMAT_LABELS[format_name]} / {implementation} / {mode}" for format_name, implementation, mode in available)
-                + " |",
-                "| --- | " + " | ".join("---:" for _ in available) + " |",
+    for format_name in FORMATS:
+        for task, mode, operation in TASK_SPECS:
+            implementations = [
+                implementation
+                for implementation in implementations_for_format(format_name)
+                if any(
+                    (format_name, implementation, mode, dataset, operation) in by_key
+                    for dataset in DATASETS
+                )
             ]
-        )
-        for dataset in datasets:
-            values: list[str] = []
-            for format_name, implementation, mode in available:
-                row = by_key.get((format_name, implementation, mode, dataset, operation))
-                values.append("-" if row is None else f"{float(row['throughput_gb_s']):.3f} GB/s")
-            lines.append(f"| {dataset.removesuffix('.json')} | " + " | ".join(values) + " |")
-        lines.append("")
+            if not implementations:
+                continue
+            task_datasets = [
+                dataset
+                for dataset in DATASETS
+                if any((format_name, implementation, mode, dataset, operation) in by_key for implementation in implementations)
+            ]
+            lines.extend(
+                [
+                    f"## {FORMAT_LABELS[format_name]} · {task}",
+                    "",
+                    "| Dataset | " + " | ".join(implementations) + " |",
+                    "| --- | " + " | ".join("---:" for _ in implementations) + " |",
+                ]
+            )
+            for dataset in task_datasets:
+                values: list[str] = []
+                for implementation in implementations:
+                    row = by_key.get((format_name, implementation, mode, dataset, operation))
+                    values.append("-" if row is None else f"{float(row['throughput_gb_s']):.3f} GB/s")
+                lines.append(f"| {dataset.removesuffix('.json')} | " + " | ".join(values) + " |")
+            lines.append("")
 
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -527,48 +539,46 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
 
     sections: list[str] = []
 
-    # Cards grouped by representation family (generic / typed), with the
-    # roundtrip operation first in each family.
+    # Cards grouped by user task. typed/generic stay an implementation detail
+    # (they select which libraries can enter a task), not a first-level label.
     for format_name in FORMATS:
         label = FORMAT_LABELS[format_name]
-        for mode in MODES:
-            implementations = implementations_for_format(format_name)
+        implementations = implementations_for_format(format_name)
+        for task, mode, operation in TASK_SPECS:
             group = [
                 dataset
                 for dataset in DATASETS
                 if any(
                     (format_name, implementation, mode, dataset, operation) in by_key
                     for implementation in implementations
-                    for operation in OPERATIONS
                 )
             ]
             if not group:
                 continue
-            for operation in OPERATIONS:
-                series = collect_series(
-                    [
-                        (
-                            implementation,
-                            format_name,
-                            implementation,
-                            mode,
-                            operation,
-                            group,
-                        )
-                        for implementation in implementations
-                        if any(
-                            (format_name, implementation, mode, dataset, operation) in by_key
-                            for dataset in group
-                        )
-                    ]
-                )
-                if series:
-                    sections.append(
-                        card(
-                            f"{label} · {mode} — {operation}",
-                            chart_html(group, series, 430, f"{format_name}-{mode}-{operation}"),
-                        )
+            series = collect_series(
+                [
+                    (
+                        implementation,
+                        format_name,
+                        implementation,
+                        mode,
+                        operation,
+                        group,
                     )
+                    for implementation in implementations
+                    if any(
+                        (format_name, implementation, mode, dataset, operation) in by_key
+                        for dataset in group
+                    )
+                ]
+            )
+            if series:
+                sections.append(
+                    card(
+                        f"{label} · {task}",
+                        chart_html(group, series, 430, f"{format_name}-{mode}-{operation}"),
+                    )
+                )
 
     if not sections:
         raise RuntimeError("no measurements to chart for the selected formats/modes")
