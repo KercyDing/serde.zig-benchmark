@@ -195,9 +195,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
         if (mode == .generic) {
             try runDecode(GenericValue, "serde generic decode", input, repeats);
             try runEncode(GenericValue, "serde generic encode", input, repeats);
+            try runRoundtrip(GenericValue, "serde generic roundtrip", input, repeats);
         } else {
             try runTyped(name, input, repeats);
             try runTypedEncode(name, input, repeats);
+            try runTypedRoundtrip(name, input, repeats);
         }
     }
     if (!ran_file) return error.InvalidArguments;
@@ -245,6 +247,14 @@ fn runTypedEncode(name: []const u8, input: []const u8, repeats: usize) !void {
     if (std.mem.eql(u8, name, "github_events.json")) return runEncode([]const GithubEvent, "serde typed encode", input, repeats);
     if (std.mem.eql(u8, name, "poet.json")) return runEncode([]const Poem, "serde typed encode", input, repeats);
     if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runEncode(TwitterDocument, "serde typed encode", input, repeats);
+    return error.InvalidArguments;
+}
+
+fn runTypedRoundtrip(name: []const u8, input: []const u8, repeats: usize) !void {
+    if (std.mem.eql(u8, name, "canada.json")) return runRoundtrip(CanadaDocument, "serde typed roundtrip", input, repeats);
+    if (std.mem.eql(u8, name, "github_events.json")) return runRoundtrip([]const GithubEvent, "serde typed roundtrip", input, repeats);
+    if (std.mem.eql(u8, name, "poet.json")) return runRoundtrip([]const Poem, "serde typed roundtrip", input, repeats);
+    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runRoundtrip(TwitterDocument, "serde typed roundtrip", input, repeats);
     return error.InvalidArguments;
 }
 
@@ -300,6 +310,29 @@ fn runEncode(comptime T: type, name: []const u8, input: []const u8, repeats: usi
         @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(repeats)) / std.time.ns_per_ms,
         total_bytes / seconds / (1024.0 * 1024.0),
         warmup.len,
+    });
+}
+
+fn runRoundtrip(comptime T: type, name: []const u8, input: []const u8, repeats: usize) !void {
+    var elapsed: u64 = 0;
+    for (0..repeats) |_| {
+        var arena = std.heap.ArenaAllocator.init(input_allocator);
+        defer arena.deinit();
+        const start = nowNanoseconds();
+        const value = try serde.msgpack.fromSlice(T, arena.allocator(), input);
+        const encoded = try serde.msgpack.toSlice(input_allocator, value);
+        const end = nowNanoseconds();
+        std.mem.doNotOptimizeAway(encoded.ptr);
+        input_allocator.free(encoded);
+        elapsed += @max(end - start, 1);
+    }
+
+    const total_bytes: f64 = @floatFromInt(input.len * repeats);
+    const seconds: f64 = @as(f64, @floatFromInt(elapsed)) / std.time.ns_per_s;
+    std.debug.print("  {s}: {d:.6} ms/op, {d:.2} MiB/s\n", .{
+        name,
+        @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(repeats)) / std.time.ns_per_ms,
+        total_bytes / seconds / (1024.0 * 1024.0),
     });
 }
 

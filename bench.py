@@ -67,7 +67,7 @@ TYPED_DATASETS = frozenset(
 )
 FORMATS = ("json", "msgpack")
 MODES = ("generic", "typed")
-OPERATIONS = ("decode", "encode")
+OPERATIONS = ("roundtrip", "decode", "encode")
 FORMAT_LABELS = {"json": "JSON", "msgpack": "MessagePack"}
 IMPLEMENTATIONS = ("serde", "std.json")
 
@@ -196,7 +196,12 @@ def parse_output(output: str, format_name: str, mode: str, run: int) -> list[Mea
 
         label = metric_match.group("label").strip().lower()
         implementation = "std.json" if label.startswith("std.json ") else "serde"
-        operation = "encode" if label.endswith(" encode") else "decode"
+        if label.endswith(" encode"):
+            operation = "encode"
+        elif label.endswith(" roundtrip"):
+            operation = "roundtrip"
+        else:
+            operation = "decode"
         output_bytes = metric_match.group("output_bytes")
         measurements.append(
             Measurement(
@@ -587,58 +592,48 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
             )
         )
 
-    # One encode and one decode card for each format.
+    # Cards grouped by representation family (generic / typed), with the
+    # roundtrip operation first in each family.
     for format_name in FORMATS:
         label = FORMAT_LABELS[format_name]
-        available_datasets = [
-            dataset
-            for dataset in DATASETS
-            if any(
-                (format_name, implementation, mode, dataset, operation) in by_key
-                for implementation in implementations_for_format(format_name)
-                for mode in MODES
-                for operation in OPERATIONS
-            )
-        ]
-        group_datasets = [
-            dataset
-            for dataset in available_datasets
-            if any(
-                (format_name, implementation, "typed", dataset, operation) in by_key
-                for implementation in implementations_for_format(format_name)
-                for operation in OPERATIONS
-            )
-        ]
-        group_datasets.extend(
-            dataset
-            for dataset in available_datasets
-            if dataset not in group_datasets
-        )
-        if not group_datasets:
-            continue
-        for operation in OPERATIONS:
-            series = collect_series(
-                [
-                    (
-                        f"{implementation} / {mode}",
-                        format_name,
-                        implementation,
-                        mode,
-                        operation,
-                        group_datasets,
-                    )
-                    for implementation in implementations_for_format(format_name)
-                    for mode in MODES
-                    if any((format_name, implementation, mode, dataset, operation) in by_key for dataset in group_datasets)
-                ]
-            )
-            if series:
-                sections.append(
-                    card(
-                        f"{label} — {operation}",
-                        chart_html(group_datasets, series, 430, f"{format_name}-{operation}"),
-                    )
+        for mode in MODES:
+            implementations = implementations_for_format(format_name)
+            group = [
+                dataset
+                for dataset in DATASETS
+                if any(
+                    (format_name, implementation, mode, dataset, operation) in by_key
+                    for implementation in implementations
+                    for operation in OPERATIONS
                 )
+            ]
+            if not group:
+                continue
+            for operation in OPERATIONS:
+                series = collect_series(
+                    [
+                        (
+                            implementation,
+                            format_name,
+                            implementation,
+                            mode,
+                            operation,
+                            group,
+                        )
+                        for implementation in implementations
+                        if any(
+                            (format_name, implementation, mode, dataset, operation) in by_key
+                            for dataset in group
+                        )
+                    ]
+                )
+                if series:
+                    sections.append(
+                        card(
+                            f"{label} · {mode} — {operation}",
+                            chart_html(group, series, 430, f"{format_name}-{mode}-{operation}"),
+                        )
+                    )
 
     if not sections:
         raise RuntimeError("no measurements to chart for the selected formats/modes")

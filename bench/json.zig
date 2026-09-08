@@ -189,19 +189,23 @@ pub fn main(init: std.process.Init.Minimal) !void {
             if (selection.implementation == .serde or selection.implementation == .all) {
                 try runDecode(GenericValue, "serde generic decode", input, repeats);
                 try runEncode(GenericValue, "serde generic encode", input, repeats);
+                try runRoundtrip(GenericValue, "serde generic roundtrip", input, repeats);
             }
             if (selection.implementation == .std or selection.implementation == .all) {
                 try runStdDecode(std.json.Value, "std.json generic decode", input, repeats);
                 try runStdEncode(std.json.Value, "std.json generic encode", input, repeats);
+                try runStdRoundtrip(std.json.Value, "std.json generic roundtrip", input, repeats);
             }
         } else {
             if (selection.implementation == .serde or selection.implementation == .all) {
                 try runTyped(name, input, repeats);
                 try runTypedEncode(name, input, repeats);
+                try runTypedRoundtrip(name, input, repeats);
             }
             if (selection.implementation == .std or selection.implementation == .all) {
                 try runStdTyped(name, input, repeats);
                 try runStdTypedEncode(name, input, repeats);
+                try runStdTypedRoundtrip(name, input, repeats);
             }
         }
     }
@@ -292,6 +296,22 @@ fn runStdTypedEncode(name: []const u8, input: []const u8, repeats: usize) !void 
     if (std.mem.eql(u8, name, "github_events.json")) return runStdEncode([]const GithubEvent, "std.json typed encode", input, repeats);
     if (std.mem.eql(u8, name, "poet.json")) return runStdEncode([]const Poem, "std.json typed encode", input, repeats);
     if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runStdEncode(TwitterDocument, "std.json typed encode", input, repeats);
+    return error.InvalidArguments;
+}
+
+fn runTypedRoundtrip(name: []const u8, input: []const u8, repeats: usize) !void {
+    if (std.mem.eql(u8, name, "canada.json")) return runRoundtrip(CanadaDocument, "serde typed roundtrip", input, repeats);
+    if (std.mem.eql(u8, name, "github_events.json")) return runRoundtrip([]const GithubEvent, "serde typed roundtrip", input, repeats);
+    if (std.mem.eql(u8, name, "poet.json")) return runRoundtrip([]const Poem, "serde typed roundtrip", input, repeats);
+    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runRoundtrip(TwitterDocument, "serde typed roundtrip", input, repeats);
+    return error.InvalidArguments;
+}
+
+fn runStdTypedRoundtrip(name: []const u8, input: []const u8, repeats: usize) !void {
+    if (std.mem.eql(u8, name, "canada.json")) return runStdRoundtrip(CanadaDocument, "std.json typed roundtrip", input, repeats);
+    if (std.mem.eql(u8, name, "github_events.json")) return runStdRoundtrip([]const GithubEvent, "std.json typed roundtrip", input, repeats);
+    if (std.mem.eql(u8, name, "poet.json")) return runStdRoundtrip([]const Poem, "std.json typed roundtrip", input, repeats);
+    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runStdRoundtrip(TwitterDocument, "std.json typed roundtrip", input, repeats);
     return error.InvalidArguments;
 }
 
@@ -398,6 +418,52 @@ fn runStdEncode(comptime T: type, name: []const u8, input: []const u8, repeats: 
         @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(repeats)) / std.time.ns_per_ms,
         total_bytes / seconds / (1024.0 * 1024.0),
         warmup.len,
+    });
+}
+
+fn runRoundtrip(comptime T: type, name: []const u8, input: []const u8, repeats: usize) !void {
+    var elapsed: u64 = 0;
+    for (0..repeats) |_| {
+        var arena = std.heap.ArenaAllocator.init(input_allocator);
+        defer arena.deinit();
+        const start = nowNanoseconds();
+        const value = try serde.json.fromSlice(T, arena.allocator(), input);
+        const encoded = try serde.json.toSlice(input_allocator, value);
+        const end = nowNanoseconds();
+        std.mem.doNotOptimizeAway(encoded.ptr);
+        input_allocator.free(encoded);
+        elapsed += @max(end - start, 1);
+    }
+
+    const total_bytes: f64 = @floatFromInt(input.len * repeats);
+    const seconds: f64 = @as(f64, @floatFromInt(elapsed)) / std.time.ns_per_s;
+    std.debug.print("  {s}: {d:.6} ms/op, {d:.2} MiB/s\n", .{
+        name,
+        @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(repeats)) / std.time.ns_per_ms,
+        total_bytes / seconds / (1024.0 * 1024.0),
+    });
+}
+
+fn runStdRoundtrip(comptime T: type, name: []const u8, input: []const u8, repeats: usize) !void {
+    var elapsed: u64 = 0;
+    for (0..repeats) |_| {
+        var arena = std.heap.ArenaAllocator.init(input_allocator);
+        defer arena.deinit();
+        const start = nowNanoseconds();
+        const value = try std.json.parseFromSliceLeaky(T, arena.allocator(), input, .{ .ignore_unknown_fields = true });
+        const encoded = try stdEncode(input_allocator, value);
+        const end = nowNanoseconds();
+        std.mem.doNotOptimizeAway(encoded.ptr);
+        input_allocator.free(encoded);
+        elapsed += @max(end - start, 1);
+    }
+
+    const total_bytes: f64 = @floatFromInt(input.len * repeats);
+    const seconds: f64 = @as(f64, @floatFromInt(elapsed)) / std.time.ns_per_s;
+    std.debug.print("  {s}: {d:.6} ms/op, {d:.2} MiB/s\n", .{
+        name,
+        @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(repeats)) / std.time.ns_per_ms,
+        total_bytes / seconds / (1024.0 * 1024.0),
     });
 }
 
