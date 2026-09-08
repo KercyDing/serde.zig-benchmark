@@ -29,10 +29,6 @@ libraries that can complete it with their native API. It builds with
 `-Doptimize=ReleaseFast` and has no Python dependencies. The page loads
 Highcharts from a CDN, so the first open needs network.
 
-Thread scaling is the same engine with an extra dimension: pass `--thread N`
-to sweep workers 1, 2, 4, ... N. Scaling results are written to
-`scaling.csv`, `scaling.md`, and `scaling.html` next to the normal reports.
-
 ## Options
 ## Options
 

@@ -635,20 +635,6 @@ def parser() -> argparse.ArgumentParser:
         default=10,
         help="independent process runs per format (default: 10)",
     )
-    result.add_argument(
-        "--thread",
-        type=positive_int,
-        default=None,
-        help="also run a thread-scaling sweep up to N workers (default: none)",
-    )
-    result.add_argument(
-        "--output",
-        dest="exports",
-        action="append",
-        choices=("csv", "md"),
-        default=None,
-        help="write only the chosen summary file(s), without the page (repeatable)",
-    )
     return result
 
 
@@ -708,19 +694,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         written.append(page)
 
     open_pages = [page] if page else []
-    if args.thread is not None:
-        from scaling import run_scaling
-
-        extra, scaling_page = run_scaling(
-            formats=formats,
-            runs=args.runs,
-            max_threads=args.thread,
-            output_dir=output_dir,
-            exports=args.exports,
-        )
-        written.extend(extra)
-        if scaling_page is not None:
-            open_pages.append(scaling_page)
 
     for path in written:
         print(f"wrote {path}")

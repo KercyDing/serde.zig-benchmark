@@ -27,13 +27,6 @@ def positive_int(value: str) -> int:
     return parsed
 
 
-def thread_counts(max_threads: int) -> tuple[int, ...]:
-    counts = [1]
-    while counts[-1] < max_threads:
-        counts.append(min(counts[-1] * 2, max_threads))
-    return tuple(counts)
-
-
 def run_process(command: Sequence[str]) -> str:
     try:
         result = subprocess.run(

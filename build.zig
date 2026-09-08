@@ -3,12 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const BenchMode = enum { generic, typed };
-    const ParallelFormat = enum { json, msgpack, all };
     const Implementation = enum { serde, std, all };
-    const mode = b.option(BenchMode, "mode", "Benchmark representation: generic or typed") orelse .generic;
-    const max_threads = b.option(usize, "max-threads", "Maximum worker count for the parallel benchmark") orelse 16;
-    const format = b.option(ParallelFormat, "format", "Format for the parallel benchmark") orelse .all;
     const implementation = b.option(Implementation, "implementation", "Implementation for JSON benchmarks") orelse .all;
 
     const serde = b.dependency("serde", .{
@@ -80,19 +75,6 @@ pub fn build(b: *std.Build) void {
     msgpack_zigmp_bench.root_module.link_libc = true;
     b.installArtifact(msgpack_zigmp_bench);
 
-    const mod_parallel_bench = b.createModule(.{
-        .root_source_file = b.path("src/parallel.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "serde", .module = serde.module("serde") },
-        },
-    });
-    const parallel_bench = b.addExecutable(.{ .name = "parallel_bench", .root_module = mod_parallel_bench });
-    parallel_bench.use_llvm = true;
-    parallel_bench.root_module.link_libc = true;
-    b.installArtifact(parallel_bench);
-
     const json_step = b.step("bench-json", "Run JSON benchmarks");
     const run_json = b.addRunArtifact(json_bench);
     run_json.addArg(@tagName(implementation));
@@ -109,12 +91,4 @@ pub fn build(b: *std.Build) void {
     const msgpack_zigmp_step = b.step("bench-msgpack-zig-msgpack", "Run zig-msgpack MessagePack task benchmarks");
     const run_msgpack_zigmp = b.addRunArtifact(msgpack_zigmp_bench);
     msgpack_zigmp_step.dependOn(&run_msgpack_zigmp.step);
-
-    const parallel_step = b.step("bench-parallel", "Run JSON and MessagePack parallel benchmarks");
-    const run_parallel = b.addRunArtifact(parallel_bench);
-    run_parallel.addArg(b.fmt("{d}", .{max_threads}));
-    run_parallel.addArg(@tagName(format));
-    run_parallel.addArg(@tagName(implementation));
-    run_parallel.addArg(@tagName(mode));
-    parallel_step.dependOn(&run_parallel.step);
 }
