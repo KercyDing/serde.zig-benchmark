@@ -432,6 +432,8 @@ def aggregate(measurements: Iterable[Measurement]) -> list[SummaryRow]:
                 "stdev_ms": statistics.stdev(durations) if len(durations) > 1 else 0.0,
                 "throughput_mib_s": throughput_mib_s,
                 "throughput_gb_s": throughput_gb_s,
+                "latency_us": median_ms * 1000.0,
+                "ops_per_s": 1000.0 / median_ms,
             }
         )
     return rows
@@ -453,6 +455,8 @@ def write_csv(path: Path, rows: Sequence[SummaryRow]) -> None:
         "stdev_ms",
         "throughput_mib_s",
         "throughput_gb_s",
+        "latency_us",
+        "ops_per_s",
     ]
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
@@ -490,19 +494,29 @@ def write_markdown(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
                 for dataset in ALL_DATASETS
                 if any((format_name, implementation, dataset, task) in by_key for implementation in implementations)
             ]
+            headers = []
+            for implementation in implementations:
+                headers += [f"{implementation} GB/s", f"{implementation} \u00b5s/op", f"{implementation} ops/s"]
             lines.extend(
                 [
                     f"## {FORMAT_LABELS[format_name]} · {task}",
                     "",
-                    "| Dataset | " + " | ".join(implementations) + " |",
-                    "| --- | " + " | ".join("---:" for _ in implementations) + " |",
+                    "| Dataset | " + " | ".join(headers) + " |",
+                    "| --- | " + " | ".join("---:" for _ in headers) + " |",
                 ]
             )
             for dataset in task_datasets:
                 values: list[str] = []
                 for implementation in implementations:
                     row = by_key.get((format_name, implementation, dataset, task))
-                    values.append("-" if row is None else f"{float(row['throughput_gb_s']):.3f} GB/s")
+                    if row is None:
+                        values += ["-", "-", "-"]
+                    else:
+                        values += [
+                            f"{float(row['throughput_gb_s']):.3f}",
+                            f"{float(row['latency_us']):.2f}",
+                            f"{float(row['ops_per_s']):,.0f}",
+                        ]
                 lines.append(f"| {dataset.removesuffix('.json')} | " + " | ".join(values) + " |")
             lines.append("")
 
@@ -558,7 +572,11 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
                 "labels": {"rotation": -35, "style": {"fontSize": "11px"}},
             },
             "yAxis": {"title": {"text": "throughput (GB/s)"}, "min": 0},
-            "tooltip": {"shared": True, "valueDecimals": 3, "valueSuffix": " GB/s"},
+            "tooltip": {
+                "shared": True,
+                "pointFormat": "{series.name}: <b>{point.y:.3f} GB/s</b><br/>"
+                "{point.latency:.2f} µs/op · {point.ops:.0f} ops/s<br/>",
+            },
             "legend": {"layout": "horizontal", "align": "center", "verticalAlign": "top"},
             "plotOptions": {"column": {"borderRadius": 3, "pointPadding": 0.06, "groupPadding": 0.2}},
             "series": series,
@@ -573,13 +591,21 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
         implementation: str,
         task: str,
         datasets: list[str],
-    ) -> list[float | None]:
-        return [
-            None
-            if (format_name, implementation, dataset, task) not in by_key
-            else float(by_key[(format_name, implementation, dataset, task)]["throughput_gb_s"])
-            for dataset in datasets
-        ]
+    ) -> list[dict[str, float] | None]:
+        points: list[dict[str, float] | None] = []
+        for dataset in datasets:
+            row = by_key.get((format_name, implementation, dataset, task))
+            if row is None:
+                points.append(None)
+            else:
+                points.append(
+                    {
+                        "y": float(row["throughput_gb_s"]),
+                        "latency": float(row["latency_us"]),
+                        "ops": float(row["ops_per_s"]),
+                    }
+                )
+        return points
 
     def collect_series(
         series_specs: list[tuple[str, str, str, str, list[str]]],
