@@ -9,6 +9,9 @@ import argparse
 import subprocess
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import TypeVar
+
+T = TypeVar("T")
 
 ROOT = Path(__file__).resolve().parent.parent
 HIGHCHARTS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/highcharts/8.2.0/"
@@ -60,12 +63,12 @@ def run_repetitions(
     raw_dir: Path,
     stem: str,
     runs: int,
-    parse: Callable[[str, int], list[object]],
-    validate: Callable[[list[object]], None],
-) -> list[object]:
+    parse: Callable[[str, int], list[T]],
+    validate: Callable[[list[T]], None],
+) -> list[T]:
     """Run one command ``runs`` times, write each raw log, and collect samples."""
     raw_dir.mkdir(parents=True, exist_ok=True)
-    collected: list[object] = []
+    collected: list[T] = []
     for run in range(1, runs + 1):
         print(f"[{label}] run {run}/{runs}: {' '.join(command)}", flush=True)
         output = run_process(command)

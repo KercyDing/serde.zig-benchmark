@@ -10,8 +10,8 @@ Highcharts from a CDN (first open requires network).
 
 Typical use::
 
-    uv run bench/bench.py              # run all, write html + csv + md, open page
-    uv run bench/bench.py --output csv # only summary.csv (or --output md)
+    uv run bench.py              # run all, write html + csv + md, open page
+    uv run bench.py --output csv # only summary.csv (or --output md)
 
 Raw per-process output and ``measurements.json`` are kept under the result
 directory (``results/single_thread``); the page and the optional CSV/Markdown
@@ -32,9 +32,10 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypedDict, cast
+
 from engine import positive_int, run_repetitions
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent
 DEFAULT_OUTPUT = ROOT / "results" / "single_thread"
 
 

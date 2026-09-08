@@ -19,7 +19,7 @@ mise install
 
 ### `bench.py`
 
-`uv run bench/bench.py` runs every format, writes `index.html`,
+`uv run bench.py` runs every format, writes `index.html`,
 `summary.csv`, and `summary.md` to `results/single_thread/`, then opens the
 page in your browser.
 
@@ -38,10 +38,10 @@ to sweep workers 1, 2, 4, ... N. Scaling results are written to
 
 | Script | Option | Description |
 | --- | --- | --- |
-| `bench/bench.py` | `--format json\|msgpack\|all` | Select input format(s). |
-| `bench/bench.py` | `--runs N` | Independent process runs (default: 10). |
-| `bench/bench.py` | `--output csv\|md` | Write only selected export(s); repeatable. |
+| `bench.py` | `--format json\|msgpack\|all` | Select input format(s). |
+| `bench.py` | `--runs N` | Independent process runs (default: 10). |
+| `bench.py` | `--output csv\|md` | Write only selected export(s); repeatable. |
 | `bench-parallel.py` | `--thread N` | Maximum worker threads (default: all logical CPUs). |
 
 Zig versions are managed with `mise`. The default is 0.16.0. Use
-`mise -E zig17 exec -- uv run bench/bench.py` for the dev toolchain.
+`mise -E zig17 exec -- uv run bench.py` for the dev toolchain.

@@ -4,20 +4,18 @@ Run from bench.py with ``--thread N``; writes scaling.csv / scaling.md /
 scaling.html into the same results directory.
 """
 
-import argparse
 import csv
 import json
 import os
 import re
 import statistics
-import sys
-import webbrowser
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypedDict, cast
-from engine import thread_counts, run_repetitions
+
+from engine import run_repetitions, thread_counts
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = ROOT / "results" / "parallel"
