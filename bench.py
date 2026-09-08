@@ -574,16 +574,40 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
             "yAxis": {"title": {"text": "throughput (GB/s)"}, "min": 0},
             "tooltip": {
                 "shared": True,
-                "pointFormat": "{series.name}: <b>{point.y:.3f} GB/s</b><br/>"
-                "{point.latency:.2f} µs/op · {point.ops:.0f} ops/s<br/>",
+                "pointFormat": "{series.name}: <b>{point.y:.3f}</b><br/>",
             },
             "legend": {"layout": "horizontal", "align": "center", "verticalAlign": "top"},
             "plotOptions": {"column": {"borderRadius": 3, "pointPadding": 0.06, "groupPadding": 0.2}},
             "series": series,
         }
+        script = (
+            f"var __c{chart_counter} = Highcharts.chart({json.dumps(container_id)}, {json.dumps(options)});\n"
+            'window.__bench_store = window.__bench_store || {};\n'
+            f'window.__bench_store[{json.dumps(container_id)}] = {{ chart: __c{chart_counter}, series: __c{chart_counter}.series.map(function (s) {{ return s.options.data; }}) }};\n'
+            'if (!window.__bench_switch) {\n'
+            "  window.__bench_switch = function (id, metric) {\n"
+            "    var rec = window.__bench_store[id]; if (!rec) return;\n"
+            "    var titles = { gb: 'throughput (GB/s)', us: 'latency (\\u00b5s/op)', ops: 'ops/s' };\n"
+            "    rec.series.forEach(function (data, index) {\n"
+            "      rec.chart.series[index].setData(data.map(function (point) {\n"
+            "        return point ? { y: point[metric], gb: point.gb, us: point.us, ops: point.ops } : null;\n"
+            "      }), false);\n"
+            "    });\n"
+            "    rec.chart.yAxis[0].setTitle({ text: titles[metric] });\n"
+            "    rec.chart.redraw();\n"
+            "  };\n"
+            "}\n"
+        )
+        control = (
+            '<div style="margin:6px 0 2px; font-size:12px; color:#4a5568;">metric: '
+            f'<select id="sel-{container_id}" onchange="window.__bench_switch({json.dumps(container_id)}, this.value)">'
+            '<option value="gb">GB/s</option><option value="us">µs/op</option>'
+            '<option value="ops">ops/s</option></select></div>\n'
+        )
         return (
-            f'<div id="{container_id}" class="hc-container"></div>\n'
-            f"<script>Highcharts.chart({json.dumps(container_id)}, {json.dumps(options)});</script>\n"
+            control
+            + f'<div id="{container_id}" class="hc-container"></div>\n'
+            + f"<script>{script}</script>\n"
         )
 
     def series_points(
@@ -601,8 +625,10 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
                 points.append(
                     {
                         "y": float(row["throughput_gb_s"]),
-                        "latency": float(row["latency_us"]),
+                        "gb": float(row["throughput_gb_s"]),
+                        "us": float(row["latency_us"]),
                         "ops": float(row["ops_per_s"]),
+                        "latency": float(row["latency_us"]),
                     }
                 )
         return points
