@@ -15,10 +15,11 @@ uv run bench.py
 `summary.csv` and `summary.md` into `bench-results/`, then opens the page in
 your browser. It builds with `-Doptimize=ReleaseFast` and has no Python
 dependencies (the page loads Highcharts from a CDN, so the first open needs
-network). Raw data stays in `bench-results/`. The page leads with JSON-vs-
-MessagePack comparisons for decode and encode over the shared typed corpus.
-It then shows JSON decode/encode charts and MessagePack decode/encode charts,
-each including generic and typed results where available.
+network). Raw data stays in `bench-results/`. The page leads with a throughput-
+and-size ranking over the shared typed corpus, using geometric means to balance
+the datasets. It then shows JSON-vs-MessagePack comparisons for decode and
+encode, followed by JSON and MessagePack decode/encode charts with generic and
+typed results where available.
 
 Examples:
 

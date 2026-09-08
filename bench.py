@@ -397,9 +397,9 @@ FORMAT_SERIES_ORDER = (
 def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) -> None:
     """Write an interactive Highcharts page (library from CDN, like yyjson).
 
-    Layout: JSON-vs-MessagePack encode and decode comparisons over the shared
-    typed corpus on top, followed by encode and decode charts for each format.
-    No Python chart library.
+    Layout: a throughput-and-size ranking over the shared typed corpus, then
+    JSON-vs-MessagePack encode and decode comparisons, followed by encode and
+    decode charts for each format. No Python chart library.
     """
     by_key = {
         (str(row["format"]), str(row["mode"]), str(row["dataset"]), str(row["operation"])): row
@@ -442,6 +442,73 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
             f"<script>Highcharts.chart({json.dumps(container_id)}, {json.dumps(options)});</script>\n"
         )
 
+    def ranking_chart_html(entries: list[dict[str, object]]) -> str:
+        nonlocal chart_counter
+        chart_counter += 1
+        container_id = f"chart-{chart_counter}"
+        ranked = sorted(entries, key=lambda entry: float(entry["throughput"]), reverse=True)
+        max_throughput = max(float(entry["throughput"]) for entry in ranked)
+        max_size = max(float(entry["size_bytes"]) for entry in ranked)
+
+        def point(value: float, maximum: float, absolute: str) -> dict[str, object]:
+            return {"y": value / maximum * 100.0, "custom": {"absolute": absolute}}
+
+        options = {
+            "chart": {"type": "bar", "height": 360, "backgroundColor": "transparent", "animation": True},
+            "title": {"text": None},
+            "credits": {"enabled": False},
+            "exporting": {"filename": "throughput-size-ranking"},
+            "xAxis": {
+                "categories": [str(entry["name"]) for entry in ranked],
+                "title": {"text": None},
+            },
+            "yAxis": {
+                "min": -100,
+                "max": 100,
+                "tickInterval": 25,
+                "title": {"text": None},
+                "labels": {"format": "{value}%"},
+                "plotLines": [{"value": 0, "color": "#9aa5b1", "width": 1, "zIndex": 3}],
+            },
+            "tooltip": {
+                "shared": True,
+                "useHTML": True,
+                "pointFormat": "<span style=\"color:{point.color}\">●</span> {series.name}: <b>{point.custom.absolute}</b><br/>",
+            },
+            "legend": {"layout": "horizontal", "align": "center", "verticalAlign": "top"},
+            "plotOptions": {"series": {"borderRadius": 3, "pointPadding": 0.08, "groupPadding": 0.16}},
+            "series": [
+                {
+                    "name": "Encoded size",
+                    "color": "#3a9d58",
+                    "data": [
+                        point(
+                            -float(entry["size_bytes"]),
+                            max_size,
+                            f"{float(entry['size_bytes']) / 1024.0:.1f} KiB",
+                        )
+                        for entry in ranked
+                    ],
+                },
+                {
+                    "name": "Throughput",
+                    "color": "#3478dc",
+                    "data": [
+                        point(
+                            float(entry["throughput"]),
+                            max_throughput,
+                            f"{float(entry['throughput']):.3f} GB/s",
+                        )
+                        for entry in ranked
+                    ],
+                },
+            ],
+        }
+        return (
+            f'<div id="{container_id}" class="hc-container"></div>\n'
+            f"<script>Highcharts.chart({json.dumps(container_id)}, {json.dumps(options)});</script>\n"
+        )
+
     def series_points(
         key_format: str,
         key_mode: str,
@@ -468,8 +535,9 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
             )
         return result
 
-    def card(heading: str, plot: str) -> str:
-        return "<section class=\"plot\">\n" f"<h2>{heading}</h2>\n{plot}\n" "</section>"
+    def card(heading: str, plot: str, description: str = "") -> str:
+        detail = "" if not description else f'<p class="chart-note">{description}</p>\n'
+        return "<section class=\"plot\">\n" f"<h2>{heading}</h2>\n{detail}{plot}\n" "</section>"
 
     # Top comparisons use only datasets with typed models in both formats.
     compare_datasets = [
@@ -479,6 +547,41 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
     ]
 
     sections: list[str] = []
+    ranking_entries: list[dict[str, object]] = []
+    for format_name, mode in FORMAT_SERIES_ORDER:
+        throughput_samples: list[float] = []
+        encoded_sizes: list[int] = []
+        for dataset in compare_datasets:
+            for operation in OPERATIONS:
+                row = by_key.get((format_name, mode, dataset, operation))
+                if row is None:
+                    break
+                throughput_samples.append(float(row["throughput_gb_s"]))
+            else:
+                encoded = by_key[(format_name, mode, dataset, "encode")]["output_bytes"]
+                if encoded is not None:
+                    encoded_sizes.append(int(encoded))
+                continue
+            break
+        if len(throughput_samples) == len(compare_datasets) * len(OPERATIONS) and len(encoded_sizes) == len(compare_datasets):
+            ranking_entries.append(
+                {
+                    "name": f"{FORMAT_LABELS[format_name]} / {mode}",
+                    "throughput": statistics.geometric_mean(throughput_samples),
+                    "size_bytes": statistics.geometric_mean(encoded_sizes),
+                }
+            )
+    if ranking_entries:
+        sections.append(
+            card(
+                "Throughput & Size Ranking",
+                ranking_chart_html(ranking_entries),
+                "Sorted by geometric-mean throughput across encode and decode on the shared typed corpus. "
+                "Encoded size extends left and throughput right; both sides are normalized independently. "
+                "Hover for absolute values.",
+            )
+        )
+
     for operation in OPERATIONS:
         compare_series = collect_series(
             [
@@ -570,6 +673,7 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
   header h1 {{ margin: 0 0 6px; font-size: 24px; color: #141a23; }}
   header p  {{ margin: 0; color: #4a5568; font-size: 14px; }}
   h2 {{ font-size: 16px; margin: 0 0 12px; color: #141a23; }}
+  .chart-note {{ margin: -4px 0 12px; color: #4a5568; font-size: 14px; }}
   section.plot {{ max-width: 1000px; margin: 0 auto 28px; background: #ffffff; border-radius: 12px; padding: 16px 20px; box-shadow: 0 1px 3px rgba(16, 24, 40, 0.08); }}
   .hc-container {{ width: 100%; }}
   footer {{ max-width: 1000px; margin: 4px auto 0; color: #718096; font-size: 12px; }}
