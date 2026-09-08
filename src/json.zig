@@ -18,9 +18,6 @@ const datasets = [_][]const u8{
     "twitterescaped.json",
 };
 
-const Mode = enum { generic, typed };
-const Implementation = enum { serde, std, all };
-
 const Number = union(enum) {
     int: i64,
     uint: u64,
@@ -165,14 +162,13 @@ const GithubEvent = struct {
 pub fn main(init: std.process.Init.Minimal) !void {
     var args = std.process.Args.Iterator.init(init.args);
     _ = args.skip();
-    const selection = parseSelection(&args) catch return error.InvalidArguments;
+    const implementation = parseImplementation(&args) catch return error.InvalidArguments;
 
-    std.debug.print("JSON benchmark ({s})\n", .{@tagName(@import("builtin").mode)});
+    std.debug.print("JSON benchmark\n", .{});
     std.debug.print("data: data/json, input read and cleanup excluded\n", .{});
 
     for (datasets) |name| {
-        if (selection.mode == .typed and !isTypedDataset(name)) continue;
-
+        const known = isKnownDataset(name);
         var path_buffer: [64]u8 = undefined;
         const path = try std.fmt.bufPrint(&path_buffer, "data/json/{s}", .{name});
         const input = try std.Io.Dir.cwd().readFileAlloc(
@@ -185,39 +181,34 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
         const repeats = repeatCount(input.len);
         std.debug.print("\n{s} ({d} bytes, {d} repeats)\n", .{ name, input.len, repeats });
-        if (selection.mode == .generic) {
-            if (selection.implementation == .serde or selection.implementation == .all) {
-                try runDecode(GenericValue, "serde generic decode", input, repeats);
-                try runEncode(GenericValue, "serde generic encode", input, repeats);
-                try runRoundtrip(GenericValue, "serde generic roundtrip", input, repeats);
+        if (implementation == .serde or implementation == .all) {
+            if (known) {
+                try runKnown(name, input, repeats);
+                try runKnownEncode(name, input, repeats);
             }
-            if (selection.implementation == .std or selection.implementation == .all) {
-                try runStdDecode(std.json.Value, "std.json generic decode", input, repeats);
-                try runStdEncode(std.json.Value, "std.json generic encode", input, repeats);
-                try runStdRoundtrip(std.json.Value, "std.json generic roundtrip", input, repeats);
+            try runDecode(GenericValue, "serde arbitrary-decode", input, repeats);
+            try runRoundtrip(GenericValue, "serde transform", input, repeats);
+        }
+        if (implementation == .std or implementation == .all) {
+            if (known) {
+                try runStdKnown(name, input, repeats);
+                try runStdKnownEncode(name, input, repeats);
             }
-        } else {
-            if (selection.implementation == .serde or selection.implementation == .all) {
-                try runTyped(name, input, repeats);
-                try runTypedEncode(name, input, repeats);
-                try runTypedRoundtrip(name, input, repeats);
-            }
-            if (selection.implementation == .std or selection.implementation == .all) {
-                try runStdTyped(name, input, repeats);
-                try runStdTypedEncode(name, input, repeats);
-                try runStdTypedRoundtrip(name, input, repeats);
-            }
+            try runStdDecode(std.json.Value, "std.json arbitrary-decode", input, repeats);
+            try runStdRoundtrip(std.json.Value, "std.json transform", input, repeats);
         }
     }
 }
 
-fn parseSelection(args: *std.process.Args.Iterator) !struct { mode: Mode, implementation: Implementation } {
-    const mode_argument = args.next() orelse return .{ .mode = .generic, .implementation = .all };
-    const implementation_argument = args.next() orelse return error.InvalidArguments;
+const Implementation = enum { serde, std, all };
+
+fn parseImplementation(args: *std.process.Args.Iterator) !Implementation {
+    const argument = args.next() orelse return .all;
     if (args.next() != null) return error.InvalidArguments;
-    const mode: Mode = if (std.mem.eql(u8, mode_argument, "generic")) .generic else if (std.mem.eql(u8, mode_argument, "typed")) .typed else return error.InvalidArguments;
-    const implementation: Implementation = if (std.mem.eql(u8, implementation_argument, "serde")) .serde else if (std.mem.eql(u8, implementation_argument, "std")) .std else if (std.mem.eql(u8, implementation_argument, "all")) .all else return error.InvalidArguments;
-    return .{ .mode = mode, .implementation = implementation };
+    if (std.mem.eql(u8, argument, "serde")) return .serde;
+    if (std.mem.eql(u8, argument, "std")) return .std;
+    if (std.mem.eql(u8, argument, "all")) return .all;
+    return error.InvalidArguments;
 }
 
 fn parseNumber(raw: []const u8) Number {
@@ -267,51 +258,35 @@ fn parseObject(allocator: Allocator, deserializer: anytype) @TypeOf(deserializer
     return .{ .object = fields.toOwnedSlice(allocator) catch return error.OutOfMemory };
 }
 
-fn runTyped(name: []const u8, input: []const u8, repeats: usize) !void {
-    if (std.mem.eql(u8, name, "canada.json")) return runDecode(CanadaDocument, "serde typed decode", input, repeats);
-    if (std.mem.eql(u8, name, "github_events.json")) return runDecode([]const GithubEvent, "serde typed decode", input, repeats);
-    if (std.mem.eql(u8, name, "poet.json")) return runDecode([]const Poem, "serde typed decode", input, repeats);
-    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runDecode(TwitterDocument, "serde typed decode", input, repeats);
+fn runKnown(name: []const u8, input: []const u8, repeats: usize) !void {
+    if (std.mem.eql(u8, name, "canada.json")) return runDecode(CanadaDocument, "serde known-decode", input, repeats);
+    if (std.mem.eql(u8, name, "github_events.json")) return runDecode([]const GithubEvent, "serde known-decode", input, repeats);
+    if (std.mem.eql(u8, name, "poet.json")) return runDecode([]const Poem, "serde known-decode", input, repeats);
+    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runDecode(TwitterDocument, "serde known-decode", input, repeats);
     return error.InvalidArguments;
 }
 
-fn runTypedEncode(name: []const u8, input: []const u8, repeats: usize) !void {
-    if (std.mem.eql(u8, name, "canada.json")) return runEncode(CanadaDocument, "serde typed encode", input, repeats);
-    if (std.mem.eql(u8, name, "github_events.json")) return runEncode([]const GithubEvent, "serde typed encode", input, repeats);
-    if (std.mem.eql(u8, name, "poet.json")) return runEncode([]const Poem, "serde typed encode", input, repeats);
-    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runEncode(TwitterDocument, "serde typed encode", input, repeats);
+fn runKnownEncode(name: []const u8, input: []const u8, repeats: usize) !void {
+    if (std.mem.eql(u8, name, "canada.json")) return runEncode(CanadaDocument, "serde known-encode", input, repeats);
+    if (std.mem.eql(u8, name, "github_events.json")) return runEncode([]const GithubEvent, "serde known-encode", input, repeats);
+    if (std.mem.eql(u8, name, "poet.json")) return runEncode([]const Poem, "serde known-encode", input, repeats);
+    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runEncode(TwitterDocument, "serde known-encode", input, repeats);
     return error.InvalidArguments;
 }
 
-fn runStdTyped(name: []const u8, input: []const u8, repeats: usize) !void {
-    if (std.mem.eql(u8, name, "canada.json")) return runStdDecode(CanadaDocument, "std.json typed decode", input, repeats);
-    if (std.mem.eql(u8, name, "github_events.json")) return runStdDecode([]const GithubEvent, "std.json typed decode", input, repeats);
-    if (std.mem.eql(u8, name, "poet.json")) return runStdDecode([]const Poem, "std.json typed decode", input, repeats);
-    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runStdDecode(TwitterDocument, "std.json typed decode", input, repeats);
+fn runStdKnown(name: []const u8, input: []const u8, repeats: usize) !void {
+    if (std.mem.eql(u8, name, "canada.json")) return runStdDecode(CanadaDocument, "std.json known-decode", input, repeats);
+    if (std.mem.eql(u8, name, "github_events.json")) return runStdDecode([]const GithubEvent, "std.json known-decode", input, repeats);
+    if (std.mem.eql(u8, name, "poet.json")) return runStdDecode([]const Poem, "std.json known-decode", input, repeats);
+    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runStdDecode(TwitterDocument, "std.json known-decode", input, repeats);
     return error.InvalidArguments;
 }
 
-fn runStdTypedEncode(name: []const u8, input: []const u8, repeats: usize) !void {
-    if (std.mem.eql(u8, name, "canada.json")) return runStdEncode(CanadaDocument, "std.json typed encode", input, repeats);
-    if (std.mem.eql(u8, name, "github_events.json")) return runStdEncode([]const GithubEvent, "std.json typed encode", input, repeats);
-    if (std.mem.eql(u8, name, "poet.json")) return runStdEncode([]const Poem, "std.json typed encode", input, repeats);
-    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runStdEncode(TwitterDocument, "std.json typed encode", input, repeats);
-    return error.InvalidArguments;
-}
-
-fn runTypedRoundtrip(name: []const u8, input: []const u8, repeats: usize) !void {
-    if (std.mem.eql(u8, name, "canada.json")) return runRoundtrip(CanadaDocument, "serde typed roundtrip", input, repeats);
-    if (std.mem.eql(u8, name, "github_events.json")) return runRoundtrip([]const GithubEvent, "serde typed roundtrip", input, repeats);
-    if (std.mem.eql(u8, name, "poet.json")) return runRoundtrip([]const Poem, "serde typed roundtrip", input, repeats);
-    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runRoundtrip(TwitterDocument, "serde typed roundtrip", input, repeats);
-    return error.InvalidArguments;
-}
-
-fn runStdTypedRoundtrip(name: []const u8, input: []const u8, repeats: usize) !void {
-    if (std.mem.eql(u8, name, "canada.json")) return runStdRoundtrip(CanadaDocument, "std.json typed roundtrip", input, repeats);
-    if (std.mem.eql(u8, name, "github_events.json")) return runStdRoundtrip([]const GithubEvent, "std.json typed roundtrip", input, repeats);
-    if (std.mem.eql(u8, name, "poet.json")) return runStdRoundtrip([]const Poem, "std.json typed roundtrip", input, repeats);
-    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runStdRoundtrip(TwitterDocument, "std.json typed roundtrip", input, repeats);
+fn runStdKnownEncode(name: []const u8, input: []const u8, repeats: usize) !void {
+    if (std.mem.eql(u8, name, "canada.json")) return runStdEncode(CanadaDocument, "std.json known-encode", input, repeats);
+    if (std.mem.eql(u8, name, "github_events.json")) return runStdEncode([]const GithubEvent, "std.json known-encode", input, repeats);
+    if (std.mem.eql(u8, name, "poet.json")) return runStdEncode([]const Poem, "std.json known-encode", input, repeats);
+    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runStdEncode(TwitterDocument, "std.json known-encode", input, repeats);
     return error.InvalidArguments;
 }
 
@@ -474,7 +449,7 @@ fn stdEncode(allocator: Allocator, value: anytype) ![]u8 {
     return output.toOwnedSlice();
 }
 
-fn isTypedDataset(name: []const u8) bool {
+fn isKnownDataset(name: []const u8) bool {
     return std.mem.eql(u8, name, "canada.json") or
         std.mem.eql(u8, name, "github_events.json") or
         std.mem.eql(u8, name, "poet.json") or

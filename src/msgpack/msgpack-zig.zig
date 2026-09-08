@@ -8,6 +8,7 @@ const input_allocator = common.input_allocator;
 const data_limit = common.data_limit;
 const datasets = common.datasets;
 const repeatCount = common.repeatCount;
+const isKnownDataset = common.isTypedDataset;
 const isTypedDataset = common.isTypedDataset;
 const nowNanoseconds = common.nowNanoseconds;
 const GithubEvent = common.GithubEvent;
@@ -119,17 +120,17 @@ fn runLalRoundtrip(comptime T: type, name: []const u8, input: []const u8, repeat
     });
 }
 
-fn runLalTyped(name: []const u8, input: []const u8, repeats: usize) !void {
-    if (std.mem.eql(u8, name, "github_events.json")) return runLalDecode([]const GithubEvent, "msgpack.zig typed decode", input, repeats);
-    if (std.mem.eql(u8, name, "poet.json")) return runLalDecode([]const Poem, "msgpack.zig typed decode", input, repeats);
-    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runLalDecode(TwitterDocument, "msgpack.zig typed decode", input, repeats);
+fn runKnown(name: []const u8, input: []const u8, repeats: usize) !void {
+    if (std.mem.eql(u8, name, "github_events.json")) return runLalDecode([]const GithubEvent, "msgpack.zig known-decode", input, repeats);
+    if (std.mem.eql(u8, name, "poet.json")) return runLalDecode([]const Poem, "msgpack.zig known-decode", input, repeats);
+    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runLalDecode(TwitterDocument, "msgpack.zig known-decode", input, repeats);
     return error.InvalidArguments;
 }
 
-fn runLalTypedEncode(name: []const u8, input: []const u8, repeats: usize) !void {
-    if (std.mem.eql(u8, name, "github_events.json")) return runLalEncode([]const GithubEvent, "msgpack.zig typed encode", input, repeats);
-    if (std.mem.eql(u8, name, "poet.json")) return runLalEncode([]const Poem, "msgpack.zig typed encode", input, repeats);
-    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runLalEncode(TwitterDocument, "msgpack.zig typed encode", input, repeats);
+fn runKnownEncode(name: []const u8, input: []const u8, repeats: usize) !void {
+    if (std.mem.eql(u8, name, "github_events.json")) return runLalEncode([]const GithubEvent, "msgpack.zig known-encode", input, repeats);
+    if (std.mem.eql(u8, name, "poet.json")) return runLalEncode([]const Poem, "msgpack.zig known-encode", input, repeats);
+    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runLalEncode(TwitterDocument, "msgpack.zig known-encode", input, repeats);
     return error.InvalidArguments;
 }
 
@@ -143,16 +144,14 @@ fn runLalTypedRoundtrip(name: []const u8, input: []const u8, repeats: usize) !vo
 pub fn main(init: std.process.Init.Minimal) !void {
     var args = std.process.Args.Iterator.init(init.args);
     _ = args.skip();
-    const mode_argument = args.next() orelse return error.InvalidArguments;
     if (args.next() != null) return error.InvalidArguments;
-    if (!std.mem.eql(u8, mode_argument, "typed")) return error.InvalidArguments;
 
-    std.debug.print("MessagePack msgpack.zig (lalinsky) benchmark (typed)\n", .{});
+    std.debug.print("MessagePack msgpack.zig benchmark\n", .{});
     std.debug.print("data: data/msgpack, input read and cleanup excluded\n", .{});
 
     var ran_file = false;
     for (datasets) |name| {
-        if (!isTypedDataset(name)) continue;
+        if (!isKnownDataset(name)) continue;
         if (std.mem.eql(u8, name, "canada.json")) continue;
         ran_file = true;
         var path_buffer: [64]u8 = undefined;
@@ -162,9 +161,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
         defer input_allocator.free(input);
         const repeats = repeatCount(input.len);
         std.debug.print("\n{s} ({d} bytes, {d} repeats)\n", .{ name, input.len, repeats });
-        try runLalTyped(name, input, repeats);
-        try runLalTypedEncode(name, input, repeats);
-        try runLalTypedRoundtrip(name, input, repeats);
+        try runKnown(name, input, repeats);
+        try runKnownEncode(name, input, repeats);
     }
     if (!ran_file) return error.InvalidArguments;
 }

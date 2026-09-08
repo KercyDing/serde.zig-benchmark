@@ -31,7 +31,7 @@ fn zigEncodeSlice(allocator: Allocator, payload: zig_msgpack.Payload) ![]u8 {
     return aw.toOwnedSlice();
 }
 
-fn runZigDecode(name: []const u8, input: []const u8, repeats: usize) !void {
+fn runDecode(name: []const u8, input: []const u8, repeats: usize) !void {
     var warmup_arena = std.heap.ArenaAllocator.init(input_allocator);
     defer warmup_arena.deinit();
     _ = try zigDecodePayload(warmup_arena.allocator(), input);
@@ -84,7 +84,7 @@ fn runZigEncode(name: []const u8, input: []const u8, repeats: usize) !void {
     });
 }
 
-fn runZigRoundtrip(name: []const u8, input: []const u8, repeats: usize) !void {
+fn runRoundtrip(name: []const u8, input: []const u8, repeats: usize) !void {
     var elapsed: u64 = 0;
     for (0..repeats) |_| {
         var arena = std.heap.ArenaAllocator.init(input_allocator);
@@ -110,11 +110,9 @@ fn runZigRoundtrip(name: []const u8, input: []const u8, repeats: usize) !void {
 pub fn main(init: std.process.Init.Minimal) !void {
     var args = std.process.Args.Iterator.init(init.args);
     _ = args.skip();
-    const mode_argument = args.next() orelse return error.InvalidArguments;
     if (args.next() != null) return error.InvalidArguments;
-    if (!std.mem.eql(u8, mode_argument, "generic")) return error.InvalidArguments;
 
-    std.debug.print("MessagePack zig-msgpack benchmark (generic)\n", .{});
+    std.debug.print("MessagePack zig-msgpack benchmark\n", .{});
     std.debug.print("data: data/msgpack, input read and cleanup excluded\n", .{});
 
     var ran_file = false;
@@ -127,9 +125,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
         defer input_allocator.free(input);
         const repeats = repeatCount(input.len);
         std.debug.print("\n{s} ({d} bytes, {d} repeats)\n", .{ name, input.len, repeats });
-        try runZigDecode("zig-msgpack generic decode", input, repeats);
-        try runZigEncode("zig-msgpack generic encode", input, repeats);
-        try runZigRoundtrip("zig-msgpack generic roundtrip", input, repeats);
+        try runDecode("zig-msgpack arbitrary-decode", input, repeats);
+        try runRoundtrip("zig-msgpack transform", input, repeats);
     }
     if (!ran_file) return error.InvalidArguments;
 }

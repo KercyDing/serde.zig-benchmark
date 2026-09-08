@@ -95,23 +95,19 @@ pub fn build(b: *std.Build) void {
 
     const json_step = b.step("bench-json", "Run JSON benchmarks");
     const run_json = b.addRunArtifact(json_bench);
-    run_json.addArg(@tagName(mode));
     run_json.addArg(@tagName(implementation));
     json_step.dependOn(&run_json.step);
 
     const msgpack_serde_step = b.step("bench-msgpack-serde", "Run serde.zig MessagePack (typed + generic) benchmarks");
     const run_msgpack_serde = b.addRunArtifact(msgpack_serde_bench);
-    run_msgpack_serde.addArg(@tagName(mode));
     msgpack_serde_step.dependOn(&run_msgpack_serde.step);
 
     const msgpack_lal_step = b.step("bench-msgpack-msgpack-zig", "Run msgpack.zig (lalinsky) MessagePack typed benchmarks");
     const run_msgpack_lal = b.addRunArtifact(msgpack_lal_bench);
-    run_msgpack_lal.addArg("typed");
     msgpack_lal_step.dependOn(&run_msgpack_lal.step);
 
     const msgpack_zigmp_step = b.step("bench-msgpack-zig-msgpack", "Run zig-msgpack MessagePack generic benchmarks");
     const run_msgpack_zigmp = b.addRunArtifact(msgpack_zigmp_bench);
-    run_msgpack_zigmp.addArg("generic");
     msgpack_zigmp_step.dependOn(&run_msgpack_zigmp.step);
 
     const parallel_step = b.step("bench-parallel", "Run JSON and MessagePack parallel benchmarks");

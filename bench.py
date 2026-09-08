@@ -1,21 +1,29 @@
 """Run the real-world serde.zig benchmark and open an interactive results page.
 
+Two wire formats (JSON and MessagePack) are measured across four user tasks,
+each run by the library implementations that support it:
+
+* Encode known data      (known-encode)
+* Decode known data      (known-decode)
+* Load arbitrary data    (arbitrary-decode)
+* Transform data         (transform)
+
 The Zig programs already perform warmup and repeat each fixture according to
-its size.  This driver runs every format/representation/implementation
-combination in separate processes, keeps the raw text for auditability,
-aggregates process runs by median, and renders one web page
-(``results/index.html``) with Highcharts column charts, then
-opens it in your browser. No Python chart library is needed; the page loads
-Highcharts from a CDN (first open requires network).
+its size and print one task-tagged metric line per dataset. This driver runs
+every format/implementation combination in separate processes, keeps the raw
+text for auditability, aggregates process runs by median, and renders one web
+page (``results/index.html``) with Highcharts column charts, then opens it in
+your browser. No Python chart library is needed; the page loads Highcharts
+from a CDN (first open requires network).
 
 Typical use::
 
-    uv run bench.py              # run all, write html + csv + md, open page
-    uv run bench.py --output csv # only summary.csv (or --output md)
+    uv run bench.py               # run all, write html + csv + md, open page
+    uv run bench.py --output csv  # only summary.csv (or --output md)
 
 Raw per-process output and ``measurements.json`` are kept under the result
-directory (``results``); the page and the optional CSV/Markdown
-exports are derived from them.
+directory (``results``); the page and the optional CSV/Markdown exports are
+derived from them.
 """
 
 import argparse
@@ -55,7 +63,8 @@ def serde_version() -> str:
         return f"v{match.group(1)}"
     return "unknown"
 
-DATASETS = (
+
+ALL_DATASETS = (
     "canada.json",
     "citm_catalog.json",
     "fgo.json",
@@ -67,41 +76,41 @@ DATASETS = (
     "twitter.json",
     "twitterescaped.json",
 )
-TYPED_DATASETS = frozenset(
+KNOWN_DATASETS = frozenset(
     {"canada.json", "github_events.json", "poet.json", "twitter.json", "twitterescaped.json"}
 )
 FORMATS = ("json", "msgpack")
-MODES = ("generic", "typed")
-OPERATIONS = ("roundtrip", "decode", "encode")
-# User-facing tasks. Each library participates with its native path (typed
-# structs or generic values) and contributes one total per task.
-TASK_SPECS = (
-    ("Encode known data", "typed", "encode"),
-    ("Decode known data", "typed", "decode"),
-    ("Load arbitrary data", "generic", "decode"),
-    ("Transform data", "generic", "roundtrip"),
-)
 FORMAT_LABELS = {"json": "JSON", "msgpack": "MessagePack"}
-IMPLEMENTATIONS = ("serde", "std.json")
+JSON_IMPLEMENTATIONS = ("serde", "std.json")
 MSGPACK_IMPLEMENTATIONS = ("serde", "msgpack.zig", "zig-msgpack")
-# msgpack.zig (lalinsky) is typed-only; zig-msgpack is generic (Payload DOM) only.
-MSGPACK_SUPPORTED_MODES = {"serde": MODES, "msgpack.zig": ("typed",), "zig-msgpack": ("generic",)}
-# Per-implementation datasets that cannot be benchmarked (msgpack.zig cannot
-# decode fixed-array geometry types in canada.json).
-IMPL_EXCLUDED_DATASETS = {"msgpack.zig": {"canada.json"}}
+# The four user tasks as (task label, metric token). Known-schema tasks
+# (known-encode/known-decode) run only on KNOWN_DATASETS; the others run on
+# every dataset.
+TASKS = (
+    ("Encode known data", "known-encode"),
+    ("Decode known data", "known-decode"),
+    ("Load arbitrary data", "arbitrary-decode"),
+    ("Transform data", "transform"),
+)
+TASK_LABELS = {token: label for label, token in TASKS}
+ALL_TOKENS = tuple(token for _, token in TASKS)
+# Tokens each MessagePack implementation prints. JSON implementations print
+# every token.
+MSGPACK_TOKENS = {
+    "serde": ALL_TOKENS,
+    "msgpack.zig": ("known-encode", "known-decode"),
+    "zig-msgpack": ("arbitrary-decode", "transform"),
+}
 
 
 def implementations_for_format(format_name: str) -> tuple[str, ...]:
-    return IMPLEMENTATIONS if format_name == "json" else MSGPACK_IMPLEMENTATIONS
-
-
-def supported_modes(format_name: str, implementation: str) -> tuple[str, ...]:
-    if format_name == "json":
-        return MODES
-    return MSGPACK_SUPPORTED_MODES[implementation]
+    return JSON_IMPLEMENTATIONS if format_name == "json" else MSGPACK_IMPLEMENTATIONS
 
 
 def implementation_argument(implementation: str) -> str:
+    """Build-step value for an implementation; the JSON step is the only one
+    that takes an argument (msgpack.zig maps to the dependency name, unused
+    here but kept for parity)."""
     return {
         "serde": "serde",
         "std.json": "std",
@@ -117,6 +126,28 @@ def implementation_directory(implementation: str) -> str:
         "msgpack.zig": "msgpack.zig",
         "zig-msgpack": "zig_msgpack",
     }[implementation]
+
+
+def supported_tokens(format_name: str, implementation: str) -> tuple[str, ...]:
+    """Metric tokens that an implementation prints for a format."""
+    if format_name == "json":
+        return ALL_TOKENS
+    return MSGPACK_TOKENS[implementation]
+
+
+def token_datasets(format_name: str, implementation: str, token: str) -> frozenset[str]:
+    """Datasets where an (implementation, token) pair produces a metric.
+
+    Known-schema tasks cover KNOWN_DATASETS, except msgpack.zig which cannot
+    decode canada.json; the remaining tasks cover every dataset.
+    """
+    if token in ("known-encode", "known-decode"):
+        datasets = KNOWN_DATASETS
+        if implementation == "msgpack.zig":
+            datasets = datasets - {"canada.json"}
+        return datasets
+    return frozenset(ALL_DATASETS)
+
 
 DATASET_RE = re.compile(
     r"^\s*(?P<dataset>\S+)\s+\((?P<input_bytes>\d+) bytes,\s+(?P<repeats>\d+) repeats\)\s*$"
@@ -135,9 +166,8 @@ class Measurement:
 
     format: str
     implementation: str
-    mode: str
     dataset: str
-    operation: str
+    task: str
     input_bytes: int
     output_bytes: int | None
     milliseconds: float
@@ -154,9 +184,8 @@ class Measurement:
 class SummaryRow(TypedDict):
     format: str
     implementation: str
-    mode: str
     dataset: str
-    operation: str
+    task: str
     input_bytes: int
     output_bytes: int | None
     measured_bytes: int
@@ -169,33 +198,25 @@ class SummaryRow(TypedDict):
     throughput_gb_s: float
 
 
+def parse_label(label: str) -> tuple[str, str]:
+    """Split a metric label into (implementation, token).
+
+    Labels look like "serde known-encode" or "std.json transform"; anything
+    without a known prefix is treated as serde and the trailing word is the
+    token candidate.
+    """
+    for prefix, implementation in (
+        ("std.json ", "std.json"),
+        ("msgpack.zig ", "msgpack.zig"),
+        ("zig-msgpack ", "zig-msgpack"),
+        ("serde ", "serde"),
+    ):
+        if label.startswith(prefix):
+            return implementation, label[len(prefix) :].strip()
+    return "serde", label.strip()
 
 
-
-def build_command(
-    format_name: str,
-    implementation: str,
-    mode: str,
-    zig: str,
-    optimize: str | None,
-) -> list[str]:
-    if format_name == "json":
-        step = "bench-json"
-        build_args = [f"-Dmode={mode}", f"-Dimplementation={implementation_argument(implementation)}"]
-    else:
-        step = {
-            "serde": "bench-msgpack-serde",
-            "msgpack.zig": "bench-msgpack-msgpack-zig",
-            "zig-msgpack": "bench-msgpack-zig-msgpack",
-        }[implementation]
-        build_args = [f"-Dmode={mode}"]
-    command = [zig, "build", step, *build_args]
-    if optimize:
-        command.append(f"-Doptimize={optimize}")
-    return command
-
-
-def parse_output(output: str, format_name: str, mode: str, run: int) -> list[Measurement]:
+def parse_output(output: str, format_name: str, run: int) -> list[Measurement]:
     """Parse benchmark output without depending on stdout/stderr ordering."""
 
     current_dataset: str | None = None
@@ -216,28 +237,17 @@ def parse_output(output: str, format_name: str, mode: str, run: int) -> list[Mea
             raise RuntimeError(f"found metric before a dataset header: {line!r}")
 
         label = metric_match.group("label").strip().lower()
-        if label.startswith("std.json "):
-            implementation = "std.json"
-        elif label.startswith("msgpack.zig "):
-            implementation = "msgpack.zig"
-        elif label.startswith("zig-msgpack "):
-            implementation = "zig-msgpack"
-        else:
-            implementation = "serde"
-        if label.endswith(" encode"):
-            operation = "encode"
-        elif label.endswith(" roundtrip"):
-            operation = "roundtrip"
-        else:
-            operation = "decode"
+        implementation, token = parse_label(label)
+        task = TASK_LABELS.get(token)
+        if task is None:
+            continue
         output_bytes = metric_match.group("output_bytes")
         measurements.append(
             Measurement(
                 format=format_name,
                 implementation=implementation,
-                mode=mode,
                 dataset=current_dataset,
-                operation=operation,
+                task=task,
                 input_bytes=current_input_bytes,
                 output_bytes=int(output_bytes) if output_bytes is not None else None,
                 milliseconds=float(metric_match.group("milliseconds")),
@@ -249,28 +259,58 @@ def parse_output(output: str, format_name: str, mode: str, run: int) -> list[Mea
     return measurements
 
 
-def expected_measurements(format_name: str, implementation: str, mode: str) -> set[tuple[str, str, str]]:
-    datasets = TYPED_DATASETS if mode == "typed" else frozenset(DATASETS)
-    datasets = frozenset(dataset for dataset in datasets if dataset not in IMPL_EXCLUDED_DATASETS.get(implementation, ()))
-    return {(implementation, dataset, operation) for dataset in datasets for operation in OPERATIONS}
+def build_command(
+    format_name: str,
+    implementation: str,
+    zig: str,
+    optimize: str | None,
+) -> list[str]:
+    """One command per (format, implementation); the Zig side needs no other
+    selector."""
+    if format_name == "json":
+        step = "bench-json"
+        build_args = [f"-Dimplementation={implementation_argument(implementation)}"]
+    else:
+        step = {
+            "serde": "bench-msgpack-serde",
+            "msgpack.zig": "bench-msgpack-msgpack-zig",
+            "zig-msgpack": "bench-msgpack-zig-msgpack",
+        }[implementation]
+        build_args = []
+    command = [zig, "build", step, *build_args]
+    if optimize:
+        command.append(f"-Doptimize={optimize}")
+    return command
 
 
-def validate_measurements(measurements: Sequence[Measurement], format_name: str, implementation: str, mode: str) -> None:
-    actual = [(item.implementation, item.dataset, item.operation) for item in measurements]
+def expected_measurements(format_name: str, implementation: str) -> set[tuple[str, str]]:
+    return {
+        (dataset, TASK_LABELS[token])
+        for token in supported_tokens(format_name, implementation)
+        for dataset in token_datasets(format_name, implementation, token)
+    }
+
+
+def validate_measurements(
+    measurements: Sequence[Measurement],
+    format_name: str,
+    implementation: str,
+) -> None:
+    actual = [(item.dataset, item.task) for item in measurements]
     if len(actual) != len(set(actual)):
-        raise RuntimeError(f"{format_name}/{mode}: duplicate metric lines in benchmark output")
+        raise RuntimeError(f"{format_name}/{implementation}: duplicate metric lines in benchmark output")
 
-    expected = expected_measurements(format_name, implementation, mode)
+    expected = expected_measurements(format_name, implementation)
     actual_set = set(actual)
     missing = sorted(expected - actual_set)
     unexpected = sorted(actual_set - expected)
     if missing or unexpected:
         details: list[str] = []
         if missing:
-            details.append("missing " + ", ".join(f"{implementation}/{dataset}/{operation}" for implementation, dataset, operation in missing))
+            details.append("missing " + ", ".join(f"{dataset}/{task}" for dataset, task in missing))
         if unexpected:
-            details.append("unexpected " + ", ".join(f"{implementation}/{dataset}/{operation}" for implementation, dataset, operation in unexpected))
-        raise RuntimeError(f"{format_name}/{mode}: " + "; ".join(details))
+            details.append("unexpected " + ", ".join(f"{dataset}/{task}" for dataset, task in unexpected))
+        raise RuntimeError(f"{format_name}/{implementation}: " + "; ".join(details))
 
 
 def run_benchmarks(
@@ -279,42 +319,41 @@ def run_benchmarks(
     zig: str,
     optimize: str,
     output_dir: Path,
-) -> tuple[list[Measurement], dict[tuple[str, str, str], list[str]]]:
+) -> tuple[list[Measurement], dict[tuple[str, str], list[str]]]:
     all_measurements: list[Measurement] = []
-    commands: dict[tuple[str, str, str], list[str]] = {}
+    commands: dict[tuple[str, str], list[str]] = {}
     for format_name in formats:
         for implementation in implementations_for_format(format_name):
             raw_dir = output_dir / format_name / implementation_directory(implementation)
-            for mode in supported_modes(format_name, implementation):
-                command = build_command(format_name, implementation, mode, zig, optimize)
-                commands[(format_name, implementation, mode)] = command
-                collected = run_repetitions(
-                    label=f"{format_name}/{implementation}/{mode}",
-                    command=command,
-                    raw_dir=raw_dir,
-                    stem=mode,
-                    runs=runs,
-                    parse=lambda out, run, f=format_name, m=mode: parse_output(out, f, m, run),
-                    validate=lambda meas, f=format_name, i=implementation, m=mode: validate_measurements(meas, f, i, m),
-                )
-                all_measurements.extend(cast(list[Measurement], collected))
+            command = build_command(format_name, implementation, zig, optimize)
+            commands[(format_name, implementation)] = command
+            collected = run_repetitions(
+                label=f"{format_name}/{implementation}",
+                command=command,
+                raw_dir=raw_dir,
+                stem="tasks",
+                runs=runs,
+                parse=lambda out, run, f=format_name: parse_output(out, f, run),
+                validate=lambda meas, f=format_name, i=implementation: validate_measurements(meas, f, i),
+            )
+            all_measurements.extend(cast(list[Measurement], collected))
     return all_measurements, commands
 
 
 def aggregate(measurements: Iterable[Measurement]) -> list[SummaryRow]:
-    groups: dict[tuple[str, str, str, str, str], list[Measurement]] = {}
+    groups: dict[tuple[str, str, str, str], list[Measurement]] = {}
     for measurement in measurements:
-        key = (measurement.format, measurement.implementation, measurement.mode, measurement.dataset, measurement.operation)
+        key = (measurement.format, measurement.implementation, measurement.dataset, measurement.task)
         groups.setdefault(key, []).append(measurement)
 
     rows: list[SummaryRow] = []
     for key in sorted(groups):
-        format_name, implementation, mode, dataset, operation = key
+        format_name, implementation, dataset, task = key
         samples = groups[key]
         durations = [sample.milliseconds for sample in samples]
         measured_bytes = {sample.measured_bytes for sample in samples}
         if len(measured_bytes) != 1:
-            raise RuntimeError(f"{format_name}/{mode}/{dataset}/{operation}: payload size changed between runs")
+            raise RuntimeError(f"{format_name}/{task}/{dataset}: payload size changed between runs")
         median_ms = statistics.median(durations)
         measured = measured_bytes.pop()
         throughput_mib_s = measured / (median_ms / 1000.0) / (1024.0 * 1024.0)
@@ -323,9 +362,8 @@ def aggregate(measurements: Iterable[Measurement]) -> list[SummaryRow]:
             {
                 "format": format_name,
                 "implementation": implementation,
-                "mode": mode,
                 "dataset": dataset,
-                "operation": operation,
+                "task": task,
                 "input_bytes": samples[0].input_bytes,
                 "output_bytes": samples[0].output_bytes,
                 "measured_bytes": measured,
@@ -345,9 +383,8 @@ def write_csv(path: Path, rows: Sequence[SummaryRow]) -> None:
     fields = [
         "format",
         "implementation",
-        "mode",
         "dataset",
-        "operation",
+        "task",
         "input_bytes",
         "output_bytes",
         "measured_bytes",
@@ -367,33 +404,33 @@ def write_csv(path: Path, rows: Sequence[SummaryRow]) -> None:
 
 def write_markdown(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
     by_key = {
-        (str(row["format"]), str(row["implementation"]), str(row["mode"]), str(row["dataset"]), str(row["operation"])): row
+        (str(row["format"]), str(row["implementation"]), str(row["dataset"]), str(row["task"])): row
         for row in rows
     }
 
     lines = [
         "# serde.zig benchmark results",
         "",
-        f"serde.zig {serde_version()} · median of {runs} process run(s). Throughput is calculated from the median `ms/op`.",
-        "Decode throughput uses input bytes; encode throughput uses encoded output bytes.",
+        (
+            f"serde.zig {serde_version()} · median of {runs} process run(s). "
+            "Throughput is computed from the median `ms/op` and the measured payload "
+            "(encoded output bytes when reported, otherwise input bytes)."
+        ),
         "",
     ]
     for format_name in FORMATS:
-        for task, mode, operation in TASK_SPECS:
+        for task, _ in TASKS:
             implementations = [
                 implementation
                 for implementation in implementations_for_format(format_name)
-                if any(
-                    (format_name, implementation, mode, dataset, operation) in by_key
-                    for dataset in DATASETS
-                )
+                if any((format_name, implementation, dataset, task) in by_key for dataset in ALL_DATASETS)
             ]
             if not implementations:
                 continue
             task_datasets = [
                 dataset
-                for dataset in DATASETS
-                if any((format_name, implementation, mode, dataset, operation) in by_key for implementation in implementations)
+                for dataset in ALL_DATASETS
+                if any((format_name, implementation, dataset, task) in by_key for implementation in implementations)
             ]
             lines.extend(
                 [
@@ -406,7 +443,7 @@ def write_markdown(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
             for dataset in task_datasets:
                 values: list[str] = []
                 for implementation in implementations:
-                    row = by_key.get((format_name, implementation, mode, dataset, operation))
+                    row = by_key.get((format_name, implementation, dataset, task))
                     values.append("-" if row is None else f"{float(row['throughput_gb_s']):.3f} GB/s")
                 lines.append(f"| {dataset.removesuffix('.json')} | " + " | ".join(values) + " |")
             lines.append("")
@@ -425,14 +462,15 @@ def load_summary(path: Path) -> tuple[list[SummaryRow], int]:
 
 HIGHCHARTS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/highcharts/8.2.0/"
 
+
 def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
     """Write an interactive Highcharts page (library from CDN, like yyjson).
 
-    Layout: encode and decode charts for each format, with implementation and
-    representation shown as separate series. No Python chart library.
+    Layout: one column chart per format and user task, with the participating
+    implementations shown as separate series. No Python chart library.
     """
     by_key = {
-        (str(row["format"]), str(row["implementation"]), str(row["mode"]), str(row["dataset"]), str(row["operation"])): row
+        (str(row["format"]), str(row["implementation"]), str(row["dataset"]), str(row["task"])): row
         for row in rows
     }
     chart_counter = 0
@@ -473,28 +511,27 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
         )
 
     def series_points(
-        key_format: str,
-        key_implementation: str,
-        key_mode: str,
-        operation: str,
+        format_name: str,
+        implementation: str,
+        task: str,
         datasets: list[str],
     ) -> list[float | None]:
         return [
             None
-            if (key_format, key_implementation, key_mode, dataset, operation) not in by_key
-            else float(by_key[(key_format, key_implementation, key_mode, dataset, operation)]["throughput_gb_s"])
+            if (format_name, implementation, dataset, task) not in by_key
+            else float(by_key[(format_name, implementation, dataset, task)]["throughput_gb_s"])
             for dataset in datasets
         ]
 
     def collect_series(
-        series_specs: list[tuple[str, str, str, str, str, list[str]]],
+        series_specs: list[tuple[str, str, str, str, list[str]]],
     ) -> list[dict[str, object]]:
         result: list[dict[str, object]] = []
-        for name, key_format, key_implementation, key_mode, operation, datasets in series_specs:
+        for name, format_name, implementation, task, datasets in series_specs:
             result.append(
                 {
                     "name": name,
-                    "data": series_points(key_format, key_implementation, key_mode, operation, datasets),
+                    "data": series_points(format_name, implementation, task, datasets),
                 }
             )
         return result
@@ -504,18 +541,15 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
         return "<section class=\"plot\">\n" f"<h2>{heading}</h2>\n{detail}{plot}\n" "</section>"
 
     sections: list[str] = []
-
-    # Cards grouped by user task. typed/generic stay an implementation detail
-    # (they select which libraries can enter a task), not a first-level label.
     for format_name in FORMATS:
         label = FORMAT_LABELS[format_name]
         implementations = implementations_for_format(format_name)
-        for task, mode, operation in TASK_SPECS:
+        for task, token in TASKS:
             group = [
                 dataset
-                for dataset in DATASETS
+                for dataset in ALL_DATASETS
                 if any(
-                    (format_name, implementation, mode, dataset, operation) in by_key
+                    (format_name, implementation, dataset, task) in by_key
                     for implementation in implementations
                 )
             ]
@@ -527,13 +561,12 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
                         implementation,
                         format_name,
                         implementation,
-                        mode,
-                        operation,
+                        task,
                         group,
                     )
                     for implementation in implementations
                     if any(
-                        (format_name, implementation, mode, dataset, operation) in by_key
+                        (format_name, implementation, dataset, task) in by_key
                         for dataset in group
                     )
                 ]
@@ -542,16 +575,16 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
                 sections.append(
                     card(
                         f"{label} · {task}",
-                        chart_html(group, series, 430, f"{format_name}-{mode}-{operation}"),
+                        chart_html(group, series, 430, f"{format_name}-{token}"),
                     )
                 )
 
     if not sections:
-        raise RuntimeError("no measurements to chart for the selected formats/modes")
+        raise RuntimeError("no measurements to chart for the selected formats")
 
     body = "\n".join(sections)
     note = (
-        f"Median of {runs} process run(s) · serde.zig {serde_version()} and std.json · "
+        f"Median of {runs} process run(s) · serde.zig {serde_version()} · "
         "timed path excludes file loading and cleanup."
     )
     html = f"""<!doctype html>
@@ -585,7 +618,6 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
 </html>
 """
     path.write_text(html, encoding="utf-8")
-
 
 
 def parser() -> argparse.ArgumentParser:
@@ -637,7 +669,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "python": platform.python_version(),
         "platform": platform.platform(),
         "runs": args.runs,
-        "commands": {f"{format_name}/{implementation}/{mode}": command for (format_name, implementation, mode), command in commands.items()},
+        "commands": {
+            f"{format_name}/{implementation}": command
+            for (format_name, implementation), command in commands.items()
+        },
     }
     payload = {
         "metadata": metadata,
