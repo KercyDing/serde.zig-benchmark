@@ -1,7 +1,3 @@
-#!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.10"
-# ///
 """Run serde.zig parallel scaling benchmarks and render an HTML report.
 
 Examples::
@@ -10,8 +6,6 @@ Examples::
     uv run bench-parallel.py --format msgpack --thread 8 --runs 5
     uv run bench-parallel.py --plot-only
 """
-
-from __future__ import annotations
 
 import argparse
 import csv
@@ -22,11 +16,11 @@ import statistics
 import subprocess
 import sys
 import webbrowser
+from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Sequence
-
+from typing import TypedDict
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_OUTPUT = ROOT / "results" / "parallel"
@@ -65,6 +59,18 @@ class Measurement:
     threads: int
     throughput_gb_s: float
     run: int
+
+
+class SummaryRow(TypedDict):
+    format: str
+    implementation: str
+    dataset: str
+    operation: str
+    threads: int
+    runs: int
+    throughput_gb_s: float
+    min_gb_s: float
+    max_gb_s: float
 
 
 def positive_int(value: str) -> int:
@@ -111,8 +117,7 @@ def run_process(command: Sequence[str]) -> str:
             list(command),
             cwd=ROOT,
             text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             check=False,
         )
     except OSError as exc:
@@ -171,7 +176,7 @@ def validate_measurements(measurements: Sequence[Measurement], format_name: str,
         raise RuntimeError("parallel benchmark output: " + "; ".join(details))
 
 
-def aggregate(measurements: Iterable[Measurement]) -> list[dict[str, object]]:
+def aggregate(measurements: Iterable[Measurement]) -> list[SummaryRow]:
     groups: dict[tuple[str, str, str, str, int], list[float]] = {}
     for measurement in measurements:
         key = (measurement.format, measurement.implementation, measurement.dataset, measurement.operation, measurement.threads)
@@ -192,7 +197,7 @@ def aggregate(measurements: Iterable[Measurement]) -> list[dict[str, object]]:
     ]
 
 
-def write_csv(path: Path, rows: Sequence[dict[str, object]]) -> None:
+def write_csv(path: Path, rows: Sequence[SummaryRow]) -> None:
     fields = [
         "format",
         "implementation",
@@ -210,7 +215,7 @@ def write_csv(path: Path, rows: Sequence[dict[str, object]]) -> None:
         writer.writerows(rows)
 
 
-def write_markdown(path: Path, rows: Sequence[dict[str, object]], formats: Sequence[str], max_threads: int) -> None:
+def write_markdown(path: Path, rows: Sequence[SummaryRow], formats: Sequence[str], max_threads: int) -> None:
     by_key = {
         (str(row["format"]), str(row["implementation"]), str(row["dataset"]), str(row["operation"]), int(row["threads"])): row
         for row in rows
@@ -240,7 +245,7 @@ def write_markdown(path: Path, rows: Sequence[dict[str, object]], formats: Seque
 HIGHCHARTS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/highcharts/8.2.0/"
 
 
-def write_html_page(path: Path, rows: Sequence[dict[str, object]], formats: Sequence[str], runs: int, max_threads: int) -> None:
+def write_html_page(path: Path, rows: Sequence[SummaryRow], formats: Sequence[str], runs: int, max_threads: int) -> None:
     by_key = {
         (str(row["format"]), str(row["implementation"]), str(row["dataset"]), str(row["operation"]), int(row["threads"])): row
         for row in rows
@@ -407,14 +412,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         markdown_path = output_dir / "summary.md"
         write_markdown(markdown_path, summary, formats, max_threads)
         written.append(markdown_path)
+    page: Path | None = None
     if want_page:
         page = output_dir / "index.html"
+        assert page is not None
         write_html_page(page, summary, formats, runs, max_threads)
         written.append(page)
 
     for path in written:
         print(f"wrote {path}")
-    if want_page:
+    if page is not None:
         webbrowser.open(page.resolve().as_uri())
     return 0
 

@@ -1,7 +1,3 @@
-#!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.10"
-# ///
 """Run the real-world serde.zig benchmark and open an interactive results page.
 
 The Zig programs already perform warmup and repeat each fixture according to
@@ -27,8 +23,6 @@ uses input bytes; encode throughput uses encoded output bytes, matching the
 benchmark implementation.
 """
 
-from __future__ import annotations
-
 import argparse
 import csv
 import json
@@ -39,11 +33,11 @@ import statistics
 import subprocess
 import sys
 import webbrowser
+from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Sequence
-
+from typing import TypedDict, cast
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_OUTPUT = ROOT / "results" / "single_thread"
@@ -120,6 +114,30 @@ class Measurement:
         if self.operation == "encode" and self.output_bytes is not None:
             return self.output_bytes
         return self.input_bytes
+
+
+class SummaryRow(TypedDict):
+    format: str
+    implementation: str
+    mode: str
+    dataset: str
+    operation: str
+    input_bytes: int
+    output_bytes: int | None
+    measured_bytes: int
+    runs: int
+    median_ms: float
+    min_ms: float
+    max_ms: float
+    stdev_ms: float
+    throughput_mib_s: float
+    throughput_gb_s: float
+
+
+class RankingEntry(TypedDict):
+    name: str
+    ops_per_sec: float
+    size_bytes: float
 
 
 def positive_int(value: str) -> int:
@@ -237,8 +255,7 @@ def run_process(command: Sequence[str]) -> str:
             list(command),
             cwd=ROOT,
             text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             check=False,
         )
     except OSError as exc:
@@ -295,13 +312,13 @@ def run_benchmarks(
     return all_measurements, commands
 
 
-def aggregate(measurements: Iterable[Measurement]) -> list[dict[str, object]]:
+def aggregate(measurements: Iterable[Measurement]) -> list[SummaryRow]:
     groups: dict[tuple[str, str, str, str, str], list[Measurement]] = {}
     for measurement in measurements:
         key = (measurement.format, measurement.implementation, measurement.mode, measurement.dataset, measurement.operation)
         groups.setdefault(key, []).append(measurement)
 
-    rows: list[dict[str, object]] = []
+    rows: list[SummaryRow] = []
     for key in sorted(groups):
         format_name, implementation, mode, dataset, operation = key
         samples = groups[key]
@@ -335,7 +352,7 @@ def aggregate(measurements: Iterable[Measurement]) -> list[dict[str, object]]:
     return rows
 
 
-def write_csv(path: Path, rows: Sequence[dict[str, object]]) -> None:
+def write_csv(path: Path, rows: Sequence[SummaryRow]) -> None:
     fields = [
         "format",
         "implementation",
@@ -359,7 +376,7 @@ def write_csv(path: Path, rows: Sequence[dict[str, object]]) -> None:
         writer.writerows(rows)
 
 
-def write_markdown(path: Path, rows: Sequence[dict[str, object]], runs: int) -> None:
+def write_markdown(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
     by_key = {(str(row["format"]), str(row["implementation"]), str(row["mode"]), str(row["dataset"]), str(row["operation"])): row for row in rows}
     series_order = [(format_name, implementation, mode) for format_name in FORMATS for implementation in IMPLEMENTATIONS for mode in MODES]
     datasets = [dataset for dataset in DATASETS if any(key[3] == dataset for key in by_key)]
@@ -400,18 +417,18 @@ def write_markdown(path: Path, rows: Sequence[dict[str, object]], runs: int) -> 
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def load_summary(path: Path) -> tuple[list[dict[str, object]], int]:
+def load_summary(path: Path) -> tuple[list[SummaryRow], int]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     rows = payload.get("summary")
     if not isinstance(rows, list):
-        raise RuntimeError(f"{path} does not contain a summary array")
+        raise TypeError(f"{path} does not contain a summary array")
     runs = int(payload.get("metadata", {}).get("runs", 1))
-    return rows, runs
+    return cast(list[SummaryRow], rows), runs
 
 
 HIGHCHARTS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/highcharts/8.2.0/"
 
-def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) -> None:
+def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
     """Write an interactive Highcharts page (library from CDN, like yyjson).
 
     Layout: encode and decode charts for each format, with implementation and
@@ -458,13 +475,13 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
             f"<script>Highcharts.chart({json.dumps(container_id)}, {json.dumps(options)});</script>\n"
         )
 
-    def ranking_chart_html(entries: list[dict[str, object]]) -> str:
+    def ranking_chart_html(entries: Sequence[RankingEntry]) -> str:
         nonlocal chart_counter
         chart_counter += 1
         container_id = f"chart-{chart_counter}"
-        ranked = sorted(entries, key=lambda entry: float(entry["ops_per_sec"]), reverse=True)
-        max_ops = max(float(entry["ops_per_sec"]) for entry in ranked)
-        max_size = max(float(entry["size_bytes"]) for entry in ranked)
+        ranked = sorted(entries, key=lambda entry: entry["ops_per_sec"], reverse=True)
+        max_ops = max(entry["ops_per_sec"] for entry in ranked)
+        max_size = max(entry["size_bytes"] for entry in ranked)
 
         def point(value: float, maximum: float, absolute: str) -> dict[str, object]:
             return {"y": value / maximum * 100.0, "custom": {"absolute": absolute}}
@@ -474,7 +491,7 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
             "title": {"text": None},
             "credits": {"enabled": False},
             "exporting": {"filename": "combined-ops-size-ranking"},
-            "xAxis": {"categories": [str(entry["name"]) for entry in ranked], "title": {"text": None}},
+            "xAxis": {"categories": [entry["name"] for entry in ranked], "title": {"text": None}},
             "yAxis": {
                 "min": -100,
                 "max": 100,
@@ -494,12 +511,12 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
                 {
                     "name": "Encoded size",
                     "color": "#3a9d58",
-                    "data": [point(-float(entry["size_bytes"]), max_size, f"{float(entry['size_bytes']) / 1024.0:.1f} KiB") for entry in ranked],
+                    "data": [point(-entry["size_bytes"], max_size, f"{entry['size_bytes'] / 1024.0:.1f} KiB") for entry in ranked],
                 },
                 {
                     "name": "Combined ops/s",
                     "color": "#3478dc",
-                    "data": [point(float(entry["ops_per_sec"]), max_ops, f"{float(entry['ops_per_sec']):.0f} ops/s") for entry in ranked],
+                    "data": [point(entry["ops_per_sec"], max_ops, f"{entry['ops_per_sec']:.0f} ops/s") for entry in ranked],
                 },
             ],
         }
@@ -546,7 +563,7 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
         if any(("json", implementation, "typed", dataset, "decode") in by_key for implementation in implementations_for_format("json"))
         and ("msgpack", "serde", "typed", dataset, "decode") in by_key
     ]
-    ranking_entries: list[dict[str, object]] = []
+    ranking_entries: list[RankingEntry] = []
     for format_name in FORMATS:
         for implementation in implementations_for_format(format_name):
             ops_samples: list[float] = []
@@ -802,14 +819,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         path = output_dir / "summary.md"
         write_markdown(path, summary, runs)
         written.append(path)
+    page: Path | None = None
     if want_page:
         page = output_dir / "index.html"
+        assert page is not None
         write_html_page(page, summary, runs)
         written.append(page)
 
     for path in written:
         print(f"wrote {path}")
-    if want_page:
+    if page is not None:
         webbrowser.open(page.resolve().as_uri())
         print(f"opened {page} in your browser")
     return 0
