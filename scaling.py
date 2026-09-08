@@ -17,7 +17,7 @@ from typing import TypedDict, cast
 
 from engine import run_repetitions, thread_counts
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent
 DEFAULT_OUTPUT = ROOT / "results" / "parallel"
 FORMATS = ("json", "msgpack")
 OPERATIONS = ("decode", "encode")
