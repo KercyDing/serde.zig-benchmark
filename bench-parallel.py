@@ -33,9 +33,22 @@ FORMATS = ("json", "msgpack")
 OPERATIONS = ("decode", "encode")
 DATASETS = ("canada.json", "github_events.json", "poet.json", "twitter.json", "twitterescaped.json")
 FORMAT_LABELS = {"json": "JSON", "msgpack": "MessagePack"}
+IMPLEMENTATIONS = ("serde", "std.json")
+
+
+def implementations_for_format(format_name: str) -> tuple[str, ...]:
+    return IMPLEMENTATIONS if format_name == "json" else ("serde",)
+
+
+def implementation_argument(implementation: str) -> str:
+    return "std" if implementation == "std.json" else implementation
+
+
+def implementation_directory(implementation: str) -> str:
+    return "serde.zig" if implementation == "serde" else "std"
 
 DATASET_RE = re.compile(
-    r"^\s*(?P<format>json|msgpack)\s+/\s+(?P<dataset>\S+)\s+\(\d+ input bytes,\s+\d+ encoded bytes,\s+\d+ repeats/worker\)\s*$"
+    r"^\s*(?P<implementation>serde|std\.json)\s+/\s+(?P<format>json|msgpack)\s+/\s+(?P<dataset>\S+)\s+\(\d+ input bytes,\s+\d+ encoded bytes,\s+\d+ repeats/worker\)\s*$"
 )
 RATE_RE = re.compile(
     r"^\s*(?P<threads>\d+) threads:\s+decode\s+(?P<decode>[0-9]+(?:\.[0-9]+)?) GB/s\s+\([^)]+\),\s+encode\s+(?P<encode>[0-9]+(?:\.[0-9]+)?) GB/s\s+\([^)]+\)\s*$"
@@ -45,6 +58,7 @@ RATE_RE = re.compile(
 @dataclass(frozen=True)
 class Measurement:
     format: str
+    implementation: str
     dataset: str
     operation: str
     threads: int
@@ -73,9 +87,9 @@ def selected_formats(format_name: str) -> tuple[str, ...]:
     return FORMATS if format_name == "all" else (format_name,)
 
 
-def build_command(args: argparse.Namespace, format_name: str) -> list[str]:
+def build_command(args: argparse.Namespace, format_name: str, implementation: str) -> list[str]:
     if args.no_build:
-        return [str(args.binary_dir / "parallel-bench"), str(args.thread), format_name]
+        return [str(args.binary_dir / "parallel-bench"), str(args.thread), format_name, implementation_argument(implementation)]
 
     command = [
         args.zig,
@@ -83,6 +97,7 @@ def build_command(args: argparse.Namespace, format_name: str) -> list[str]:
         "bench-parallel",
         f"-Dmax-threads={args.thread}",
         f"-Dformat={format_name}",
+        f"-Dimplementation={implementation_argument(implementation)}",
     ]
     if args.optimize:
         command.append(f"-Doptimize={args.optimize}")
@@ -111,34 +126,35 @@ def run_process(command: Sequence[str]) -> str:
 
 def parse_output(output: str, run: int) -> list[Measurement]:
     current_format: str | None = None
+    current_implementation: str | None = None
     current_dataset: str | None = None
     measurements: list[Measurement] = []
     for line in output.splitlines():
         if dataset_match := DATASET_RE.match(line):
             current_format = dataset_match.group("format")
+            current_implementation = dataset_match.group("implementation")
             current_dataset = dataset_match.group("dataset")
             continue
         if not (rate_match := RATE_RE.match(line)):
             continue
-        if current_format is None or current_dataset is None:
+        if current_format is None or current_implementation is None or current_dataset is None:
             raise RuntimeError(f"found throughput before a dataset header: {line!r}")
         threads = int(rate_match.group("threads"))
         measurements.extend(
             (
-                Measurement(current_format, current_dataset, "decode", threads, float(rate_match.group("decode")), run),
-                Measurement(current_format, current_dataset, "encode", threads, float(rate_match.group("encode")), run),
+                Measurement(current_format, current_implementation, current_dataset, "decode", threads, float(rate_match.group("decode")), run),
+                Measurement(current_format, current_implementation, current_dataset, "encode", threads, float(rate_match.group("encode")), run),
             )
         )
     return measurements
 
 
-def validate_measurements(measurements: Sequence[Measurement], formats: Sequence[str], max_threads: int) -> None:
-    actual = {(item.format, item.dataset, item.operation, item.threads) for item in measurements}
+def validate_measurements(measurements: Sequence[Measurement], format_name: str, implementation: str, max_threads: int) -> None:
+    actual = {(item.format, item.implementation, item.dataset, item.operation, item.threads) for item in measurements}
     if len(actual) != len(measurements):
         raise RuntimeError("duplicate metric lines in benchmark output")
     expected = {
-        (format_name, dataset, operation, threads)
-        for format_name in formats
+        (format_name, implementation, dataset, operation, threads)
         for dataset in DATASETS
         for operation in OPERATIONS
         for threads in thread_counts(max_threads)
@@ -148,20 +164,21 @@ def validate_measurements(measurements: Sequence[Measurement], formats: Sequence
         unexpected = sorted(actual - expected)
         details = []
         if missing:
-            details.append("missing " + ", ".join(f"{key[0]}/{key[1]}/{key[2]}/{key[3]}" for key in missing))
+            details.append("missing " + ", ".join(f"{key[0]}/{key[1]}/{key[2]}/{key[3]}/{key[4]}" for key in missing))
         if unexpected:
-            details.append("unexpected " + ", ".join(f"{key[0]}/{key[1]}/{key[2]}/{key[3]}" for key in unexpected))
+            details.append("unexpected " + ", ".join(f"{key[0]}/{key[1]}/{key[2]}/{key[3]}/{key[4]}" for key in unexpected))
         raise RuntimeError("parallel benchmark output: " + "; ".join(details))
 
 
 def aggregate(measurements: Iterable[Measurement]) -> list[dict[str, object]]:
-    groups: dict[tuple[str, str, str, int], list[float]] = {}
+    groups: dict[tuple[str, str, str, str, int], list[float]] = {}
     for measurement in measurements:
-        key = (measurement.format, measurement.dataset, measurement.operation, measurement.threads)
+        key = (measurement.format, measurement.implementation, measurement.dataset, measurement.operation, measurement.threads)
         groups.setdefault(key, []).append(measurement.throughput_gb_s)
     return [
         {
             "format": format_name,
+            "implementation": implementation,
             "dataset": dataset,
             "operation": operation,
             "threads": threads,
@@ -170,7 +187,7 @@ def aggregate(measurements: Iterable[Measurement]) -> list[dict[str, object]]:
             "min_gb_s": min(samples),
             "max_gb_s": max(samples),
         }
-        for (format_name, dataset, operation, threads), samples in sorted(groups.items())
+        for (format_name, implementation, dataset, operation, threads), samples in sorted(groups.items())
     ]
 
 
@@ -179,7 +196,7 @@ HIGHCHARTS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/highcharts/8.2.0/"
 
 def write_html_page(path: Path, rows: Sequence[dict[str, object]], formats: Sequence[str], runs: int, max_threads: int) -> None:
     by_key = {
-        (str(row["format"]), str(row["dataset"]), str(row["operation"]), int(row["threads"])): row
+        (str(row["format"]), str(row["implementation"]), str(row["dataset"]), str(row["operation"]), int(row["threads"])): row
         for row in rows
     }
     counts = thread_counts(max_threads)
@@ -203,24 +220,29 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], formats: Sequ
         }
         return f'<section class="plot"><h2>{title}</h2><div id="{container_id}"></div></section>\n<script>Highcharts.chart({json.dumps(container_id)}, {json.dumps(options)});</script>'
 
-    def values(format_name: str, dataset: str, operation: str) -> list[float]:
-        return [float(by_key[(format_name, dataset, operation, threads)]["throughput_gb_s"]) for threads in counts]
+    def values(format_name: str, implementation: str, dataset: str, operation: str) -> list[float]:
+        return [float(by_key[(format_name, implementation, dataset, operation, threads)]["throughput_gb_s"]) for threads in counts]
 
     overview = []
     for format_name in formats:
-        for operation in OPERATIONS:
-            overview.append(
-                {
-                    "name": f"{FORMAT_LABELS[format_name]} / {operation}",
-                    "data": [statistics.geometric_mean(values(format_name, dataset, operation)[index] for dataset in DATASETS) for index in range(len(counts))],
-                }
-            )
+        for implementation in implementations_for_format(format_name):
+            for operation in OPERATIONS:
+                overview.append(
+                    {
+                        "name": f"{FORMAT_LABELS[format_name]} / {implementation} / {operation}",
+                        "data": [statistics.geometric_mean(values(format_name, implementation, dataset, operation)[index] for dataset in DATASETS) for index in range(len(counts))],
+                    }
+                )
 
     sections = [chart("Parallel throughput overview", overview, "parallel-overview")]
     for format_name in formats:
         for operation in OPERATIONS:
             series = [
-                {"name": dataset.removesuffix(".json"), "data": values(format_name, dataset, operation)}
+                {
+                    "name": f"{implementation} / {dataset.removesuffix('.json')}",
+                    "data": values(format_name, implementation, dataset, operation),
+                }
+                for implementation in implementations_for_format(format_name)
                 for dataset in DATASETS
             ]
             sections.append(chart(f"{FORMAT_LABELS[format_name]} — {operation}", series, f"parallel-{format_name}-{operation}"))
@@ -243,7 +265,7 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], formats: Sequ
 </style>
 </head>
 <body>
-<header><h1>serde.zig parallel scaling benchmark</h1><p>Median of {runs} process run(s) · typed JSON and MessagePack corpora · total throughput across workers.</p></header>
+<header><h1>serde.zig parallel scaling benchmark</h1><p>Median of {runs} process run(s) · typed JSON compares serde.zig and std.json · total throughput across workers.</p></header>
 {''.join(sections)}
 </body>
 </html>
@@ -284,19 +306,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         formats = selected_formats(args.format_name)
         commands: dict[str, list[str]] = {}
         for format_name in formats:
-            command = build_command(args, format_name)
-            commands[format_name] = command
-            raw_dir = output_dir / format_name
-            raw_dir.mkdir(parents=True, exist_ok=True)
-            for run in range(1, args.runs + 1):
-                print(f"[{format_name}] run {run}/{args.runs}: {' '.join(command)}", flush=True)
-                output = run_process(command)
-                raw_path = raw_dir / f"parallel-{run:02d}.txt"
-                raw_path.write_text(output, encoding="utf-8")
-                parsed = parse_output(output, run)
-                validate_measurements(parsed, (format_name,), args.thread)
-                measurements.extend(parsed)
-                print(f"  parsed {len(parsed)} measurements -> {raw_path}", flush=True)
+            for implementation in implementations_for_format(format_name):
+                command = build_command(args, format_name, implementation)
+                commands[f"{format_name}/{implementation}"] = command
+                raw_dir = output_dir / format_name / implementation_directory(implementation)
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                for run in range(1, args.runs + 1):
+                    print(f"[{format_name}/{implementation}] run {run}/{args.runs}: {' '.join(command)}", flush=True)
+                    output = run_process(command)
+                    raw_path = raw_dir / f"parallel-{run:02d}.txt"
+                    raw_path.write_text(output, encoding="utf-8")
+                    parsed = parse_output(output, run)
+                    validate_measurements(parsed, format_name, implementation, args.thread)
+                    measurements.extend(parsed)
+                    print(f"  parsed {len(parsed)} measurements -> {raw_path}", flush=True)
         summary = aggregate(measurements)
         runs = args.runs
         max_threads = args.thread

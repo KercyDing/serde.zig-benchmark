@@ -15,13 +15,13 @@ uv run bench.py
 `summary.csv` and `summary.md` into `results/single_thread/`, then opens the page in
 your browser. It builds with `-Doptimize=ReleaseFast` and has no Python
 dependencies (the page loads Highcharts from a CDN, so the first open needs
-network). Raw JSON and MessagePack logs are kept separately in
-`results/single_thread/json/` and `results/single_thread/msgpack/`.
-The combined summary stays in `results/single_thread/`. The page leads with a throughput-
-and-size ranking over the shared typed corpus, using geometric means to balance
-the datasets. It then shows JSON-vs-MessagePack comparisons for decode and
-encode, followed by JSON and MessagePack decode/encode charts with generic and
-typed results where available.
+network). JSON logs are split between `results/single_thread/json/serde.zig/`
+and `results/single_thread/json/std/`; MessagePack logs are in
+`results/single_thread/msgpack/serde.zig/`.
+The combined summary stays in `results/single_thread/`. The page leads with a
+combined-ops/s-and-size ranking over the shared typed corpus, then presents
+separate JSON and MessagePack decode/encode charts with generic and typed
+results where available.
 
 Examples:
 
@@ -58,7 +58,8 @@ zig build bench-msgpack -Doptimize=ReleaseFast
 
 The parallel benchmark is separate from the single-threaded report. It runs
 the typed JSON and MessagePack corpora with independent worker arenas and
-reports total throughput plus speedup relative to one worker:
+reports total throughput plus speedup relative to one worker. JSON compares
+serde.zig with `std.json`; MessagePack has only the serde.zig series:
 
 ```sh
 uv run bench-parallel.py
@@ -66,8 +67,9 @@ uv run bench-parallel.py --thread 8
 uv run bench-parallel.py --format msgpack
 ```
 
-The report is written to `results/parallel/index.html`; raw logs are separated
-by format under `results/parallel/json/` and `results/parallel/msgpack/`.
+The report is written to `results/parallel/index.html`; raw logs are split by
+format and implementation under `results/parallel/json/serde.zig/`,
+`results/parallel/json/std/`, and `results/parallel/msgpack/serde.zig/`.
 The combined summary stays in `results/parallel/`. The tested thread counts
 double from one worker and include the selected maximum when it is not a power
 of two.

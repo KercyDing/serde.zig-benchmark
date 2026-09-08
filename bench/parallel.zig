@@ -8,6 +8,8 @@ const target_bytes_per_worker = 64 * 1024 * 1024;
 
 const Format = enum { json, msgpack };
 const SelectedFormat = enum { json, msgpack, all };
+const Backend = enum { serde, std_json };
+const SelectedImplementation = enum { serde, std, all };
 
 const TwitterUser = struct {
     id: u64,
@@ -87,28 +89,34 @@ pub fn main(init: std.process.Init.Minimal) !void {
     _ = args.skip();
     const max_threads = std.fmt.parseInt(usize, args.next() orelse return error.InvalidArguments, 10) catch return error.InvalidArguments;
     const selected_format = std.meta.stringToEnum(SelectedFormat, args.next() orelse return error.InvalidArguments) orelse return error.InvalidArguments;
+    const selected_implementation = std.meta.stringToEnum(SelectedImplementation, args.next() orelse return error.InvalidArguments) orelse return error.InvalidArguments;
     if (max_threads == 0 or args.next() != null) return error.InvalidArguments;
 
     std.debug.print("Parallel benchmark ({s})\n", .{@tagName(@import("builtin").mode)});
     std.debug.print("Each worker processes about {d} MiB per operation. File loading, fixture setup, warmup, and cleanup are excluded.\n", .{target_bytes_per_worker / (1024 * 1024)});
 
     if (selected_format == .json or selected_format == .all) {
-        try runFiles(.json, max_threads);
+        try runFiles(.json, selected_implementation, max_threads);
     }
     if (selected_format == .msgpack or selected_format == .all) {
-        try runFiles(.msgpack, max_threads);
+        if (selected_implementation != .std) try runFiles(.msgpack, selected_implementation, max_threads);
     }
 }
 
-fn runFiles(comptime format: Format, max_threads: usize) !void {
-    try runFormat(format, CanadaDocument, "canada.json", max_threads);
-    try runFormat(format, []const GithubEvent, "github_events.json", max_threads);
-    try runFormat(format, []const Poem, "poet.json", max_threads);
-    try runFormat(format, TwitterDocument, "twitter.json", max_threads);
-    try runFormat(format, TwitterDocument, "twitterescaped.json", max_threads);
+fn runFiles(comptime format: Format, selected_implementation: SelectedImplementation, max_threads: usize) !void {
+    if (selected_implementation != .std) try runBackendFiles(format, .serde, max_threads);
+    if (format == .json and selected_implementation != .serde) try runBackendFiles(format, .std_json, max_threads);
 }
 
-fn runFormat(comptime format: Format, comptime T: type, name: []const u8, max_threads: usize) !void {
+fn runBackendFiles(comptime format: Format, comptime backend: Backend, max_threads: usize) !void {
+    try runFormat(format, backend, CanadaDocument, "canada.json", max_threads);
+    try runFormat(format, backend, []const GithubEvent, "github_events.json", max_threads);
+    try runFormat(format, backend, []const Poem, "poet.json", max_threads);
+    try runFormat(format, backend, TwitterDocument, "twitter.json", max_threads);
+    try runFormat(format, backend, TwitterDocument, "twitterescaped.json", max_threads);
+}
+
+fn runFormat(comptime format: Format, comptime backend: Backend, comptime T: type, name: []const u8, max_threads: usize) !void {
     var path_buffer: [64]u8 = undefined;
     const stem = name[0 .. name.len - ".json".len];
     const extension = switch (format) {
@@ -126,19 +134,19 @@ fn runFormat(comptime format: Format, comptime T: type, name: []const u8, max_th
 
     var fixture_arena = std.heap.ArenaAllocator.init(input_allocator);
     defer fixture_arena.deinit();
-    const value = try decode(format, T, fixture_arena.allocator(), input);
-    const reference = try encode(format, input_allocator, value);
+    const value = try decode(backend, format, T, fixture_arena.allocator(), input);
+    const reference = try encode(backend, format, input_allocator, value);
     defer input_allocator.free(reference);
 
     const repeats = repeatCount(@max(input.len, reference.len));
-    std.debug.print("\n{s} / {s} ({d} input bytes, {d} encoded bytes, {d} repeats/worker)\n", .{ @tagName(format), name, input.len, reference.len, repeats });
+    std.debug.print("\n{s} / {s} / {s} ({d} input bytes, {d} encoded bytes, {d} repeats/worker)\n", .{ backendName(backend), @tagName(format), name, input.len, reference.len, repeats });
 
     var decode_baseline: ?f64 = null;
     var encode_baseline: ?f64 = null;
     var threads: usize = 1;
     while (true) {
-        const decode_rate = try measureDecode(format, T, input, repeats, threads);
-        const encode_rate = try measureEncode(format, T, &value, reference.len, repeats, threads);
+        const decode_rate = try measureDecode(backend, format, T, input, repeats, threads);
+        const encode_rate = try measureEncode(backend, format, T, &value, reference.len, repeats, threads);
         if (threads == 1) {
             decode_baseline = decode_rate;
             encode_baseline = encode_rate;
@@ -156,21 +164,41 @@ fn runFormat(comptime format: Format, comptime T: type, name: []const u8, max_th
     }
 }
 
-fn decode(comptime format: Format, comptime T: type, allocator: Allocator, input: []const u8) anyerror!T {
-    return switch (format) {
-        .json => serde.json.fromSlice(T, allocator, input),
-        .msgpack => serde.msgpack.fromSlice(T, allocator, input),
+fn backendName(comptime backend: Backend) []const u8 {
+    return switch (backend) {
+        .serde => "serde",
+        .std_json => "std.json",
     };
 }
 
-fn encode(comptime format: Format, allocator: Allocator, value: anytype) anyerror![]u8 {
-    return switch (format) {
-        .json => serde.json.toSlice(allocator, value),
-        .msgpack => serde.msgpack.toSlice(allocator, value),
+fn decode(comptime backend: Backend, comptime format: Format, comptime T: type, allocator: Allocator, input: []const u8) anyerror!T {
+    return switch (backend) {
+        .serde => switch (format) {
+            .json => serde.json.fromSlice(T, allocator, input),
+            .msgpack => serde.msgpack.fromSlice(T, allocator, input),
+        },
+        .std_json => std.json.parseFromSliceLeaky(T, allocator, input, .{ .ignore_unknown_fields = true }),
     };
 }
 
-fn measureDecode(comptime format: Format, comptime T: type, input: []const u8, repeats: usize, threads: usize) !f64 {
+fn encode(comptime backend: Backend, comptime format: Format, allocator: Allocator, value: anytype) anyerror![]u8 {
+    return switch (backend) {
+        .serde => switch (format) {
+            .json => serde.json.toSlice(allocator, value),
+            .msgpack => serde.msgpack.toSlice(allocator, value),
+        },
+        .std_json => stdEncode(allocator, value),
+    };
+}
+
+fn stdEncode(allocator: Allocator, value: anytype) ![]u8 {
+    var output: std.Io.Writer.Allocating = .init(allocator);
+    errdefer output.deinit();
+    try std.json.Stringify.value(value, .{}, &output.writer);
+    return output.toOwnedSlice();
+}
+
+fn measureDecode(comptime backend: Backend, comptime format: Format, comptime T: type, input: []const u8, repeats: usize, threads: usize) !f64 {
     var gate = StartGate{};
     const workers = try input_allocator.alloc(std.Thread, threads);
     defer input_allocator.free(workers);
@@ -178,7 +206,7 @@ fn measureDecode(comptime format: Format, comptime T: type, input: []const u8, r
     defer input_allocator.free(contexts);
     for (workers, contexts) |*worker, *context| {
         context.* = .{ .input = input, .repeats = repeats, .gate = &gate };
-        worker.* = try std.Thread.spawn(.{}, decodeWorker(format, T), .{context});
+        worker.* = try std.Thread.spawn(.{}, decodeWorker(backend, format, T), .{context});
     }
     while (gate.ready.load(.acquire) != threads) std.Thread.yield() catch {};
     const start = nowNanoseconds();
@@ -189,24 +217,24 @@ fn measureDecode(comptime format: Format, comptime T: type, input: []const u8, r
 
 const DecodeContext = struct { input: []const u8, repeats: usize, gate: *StartGate };
 
-fn decodeWorker(comptime format: Format, comptime T: type) fn (*const DecodeContext) void {
+fn decodeWorker(comptime backend: Backend, comptime format: Format, comptime T: type) fn (*const DecodeContext) void {
     return struct {
         fn run(context: *const DecodeContext) void {
             var warmup_arena = std.heap.ArenaAllocator.init(input_allocator);
             defer warmup_arena.deinit();
-            _ = decode(format, T, warmup_arena.allocator(), context.input) catch @panic("decode warmup failed");
+            _ = decode(backend, format, T, warmup_arena.allocator(), context.input) catch @panic("decode warmup failed");
             context.gate.wait();
             for (0..context.repeats) |_| {
                 var arena = std.heap.ArenaAllocator.init(input_allocator);
                 defer arena.deinit();
-                const value = decode(format, T, arena.allocator(), context.input) catch @panic("decode failed");
+                const value = decode(backend, format, T, arena.allocator(), context.input) catch @panic("decode failed");
                 std.mem.doNotOptimizeAway(value);
             }
         }
     }.run;
 }
 
-fn measureEncode(comptime format: Format, comptime T: type, value: *const T, encoded_len: usize, repeats: usize, threads: usize) !f64 {
+fn measureEncode(comptime backend: Backend, comptime format: Format, comptime T: type, value: *const T, encoded_len: usize, repeats: usize, threads: usize) !f64 {
     var gate = StartGate{};
     const workers = try input_allocator.alloc(std.Thread, threads);
     defer input_allocator.free(workers);
@@ -214,7 +242,7 @@ fn measureEncode(comptime format: Format, comptime T: type, value: *const T, enc
     defer input_allocator.free(contexts);
     for (workers, contexts) |*worker, *context| {
         context.* = .{ .value = value, .repeats = repeats, .gate = &gate };
-        worker.* = try std.Thread.spawn(.{}, encodeWorker(format, T), .{context});
+        worker.* = try std.Thread.spawn(.{}, encodeWorker(backend, format, T), .{context});
     }
     while (gate.ready.load(.acquire) != threads) std.Thread.yield() catch {};
     const start = nowNanoseconds();
@@ -227,17 +255,17 @@ fn EncodeContext(comptime T: type) type {
     return struct { value: *const T, repeats: usize, gate: *StartGate };
 }
 
-fn encodeWorker(comptime format: Format, comptime T: type) fn (*const EncodeContext(T)) void {
+fn encodeWorker(comptime backend: Backend, comptime format: Format, comptime T: type) fn (*const EncodeContext(T)) void {
     return struct {
         fn run(context: *const EncodeContext(T)) void {
             var output_arena = std.heap.ArenaAllocator.init(input_allocator);
             defer output_arena.deinit();
-            _ = encode(format, output_arena.allocator(), context.value.*) catch @panic("encode warmup failed");
+            _ = encode(backend, format, output_arena.allocator(), context.value.*) catch @panic("encode warmup failed");
             _ = output_arena.reset(.retain_capacity);
             context.gate.wait();
             for (0..context.repeats) |_| {
                 _ = output_arena.reset(.retain_capacity);
-                const encoded = encode(format, output_arena.allocator(), context.value.*) catch @panic("encode failed");
+                const encoded = encode(backend, format, output_arena.allocator(), context.value.*) catch @panic("encode failed");
                 std.mem.doNotOptimizeAway(encoded.ptr);
             }
         }

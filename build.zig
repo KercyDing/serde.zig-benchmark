@@ -5,9 +5,11 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const BenchMode = enum { generic, typed };
     const ParallelFormat = enum { json, msgpack, all };
+    const Implementation = enum { serde, std, all };
     const mode = b.option(BenchMode, "mode", "Benchmark representation: generic or typed") orelse .generic;
     const max_threads = b.option(usize, "max-threads", "Maximum worker count for the parallel benchmark") orelse 16;
     const format = b.option(ParallelFormat, "format", "Format for the parallel benchmark") orelse .all;
+    const implementation = b.option(Implementation, "implementation", "Implementation for JSON benchmarks") orelse .all;
 
     const serde = b.dependency("serde", .{
         .target = target,
@@ -68,6 +70,7 @@ pub fn build(b: *std.Build) void {
     const json_step = b.step("bench-json", "Run JSON benchmarks");
     const run_json = b.addRunArtifact(json_bench);
     run_json.addArg(@tagName(mode));
+    run_json.addArg(@tagName(implementation));
     json_step.dependOn(&run_json.step);
 
     const msgpack_step = b.step("bench-msgpack", "Run MessagePack benchmarks");
@@ -79,5 +82,6 @@ pub fn build(b: *std.Build) void {
     const run_parallel = b.addRunArtifact(parallel_bench);
     run_parallel.addArg(b.fmt("{d}", .{max_threads}));
     run_parallel.addArg(@tagName(format));
+    run_parallel.addArg(@tagName(implementation));
     parallel_step.dependOn(&run_parallel.step);
 }

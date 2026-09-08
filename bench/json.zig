@@ -19,6 +19,7 @@ const datasets = [_][]const u8{
 };
 
 const Mode = enum { generic, typed };
+const Implementation = enum { serde, std, all };
 
 const Number = union(enum) {
     int: i64,
@@ -164,13 +165,13 @@ const GithubEvent = struct {
 pub fn main(init: std.process.Init.Minimal) !void {
     var args = std.process.Args.Iterator.init(init.args);
     _ = args.skip();
-    const mode = parseMode(&args) catch return error.InvalidArguments;
+    const selection = parseSelection(&args) catch return error.InvalidArguments;
 
     std.debug.print("JSON benchmark ({s})\n", .{@tagName(@import("builtin").mode)});
     std.debug.print("data: data/json, input read and cleanup excluded\n", .{});
 
     for (datasets) |name| {
-        if (mode == .typed and !isTypedDataset(name)) continue;
+        if (selection.mode == .typed and !isTypedDataset(name)) continue;
 
         var path_buffer: [64]u8 = undefined;
         const path = try std.fmt.bufPrint(&path_buffer, "data/json/{s}", .{name});
@@ -184,22 +185,35 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
         const repeats = repeatCount(input.len);
         std.debug.print("\n{s} ({d} bytes, {d} repeats)\n", .{ name, input.len, repeats });
-        if (mode == .generic) {
-            try runDecode(GenericValue, "serde generic decode", input, repeats);
-            try runEncode(GenericValue, "serde generic encode", input, repeats);
+        if (selection.mode == .generic) {
+            if (selection.implementation == .serde or selection.implementation == .all) {
+                try runDecode(GenericValue, "serde generic decode", input, repeats);
+                try runEncode(GenericValue, "serde generic encode", input, repeats);
+            }
+            if (selection.implementation == .std or selection.implementation == .all) {
+                try runStdDecode(std.json.Value, "std.json generic decode", input, repeats);
+                try runStdEncode(std.json.Value, "std.json generic encode", input, repeats);
+            }
         } else {
-            try runTyped(name, input, repeats);
-            try runTypedEncode(name, input, repeats);
+            if (selection.implementation == .serde or selection.implementation == .all) {
+                try runTyped(name, input, repeats);
+                try runTypedEncode(name, input, repeats);
+            }
+            if (selection.implementation == .std or selection.implementation == .all) {
+                try runStdTyped(name, input, repeats);
+                try runStdTypedEncode(name, input, repeats);
+            }
         }
     }
 }
 
-fn parseMode(args: *std.process.Args.Iterator) !Mode {
-    const argument = args.next() orelse return .generic;
+fn parseSelection(args: *std.process.Args.Iterator) !struct { mode: Mode, implementation: Implementation } {
+    const mode_argument = args.next() orelse return .{ .mode = .generic, .implementation = .all };
+    const implementation_argument = args.next() orelse return error.InvalidArguments;
     if (args.next() != null) return error.InvalidArguments;
-    if (std.mem.eql(u8, argument, "generic")) return .generic;
-    if (std.mem.eql(u8, argument, "typed")) return .typed;
-    return error.InvalidArguments;
+    const mode: Mode = if (std.mem.eql(u8, mode_argument, "generic")) .generic else if (std.mem.eql(u8, mode_argument, "typed")) .typed else return error.InvalidArguments;
+    const implementation: Implementation = if (std.mem.eql(u8, implementation_argument, "serde")) .serde else if (std.mem.eql(u8, implementation_argument, "std")) .std else if (std.mem.eql(u8, implementation_argument, "all")) .all else return error.InvalidArguments;
+    return .{ .mode = mode, .implementation = implementation };
 }
 
 fn parseNumber(raw: []const u8) Number {
@@ -265,6 +279,22 @@ fn runTypedEncode(name: []const u8, input: []const u8, repeats: usize) !void {
     return error.InvalidArguments;
 }
 
+fn runStdTyped(name: []const u8, input: []const u8, repeats: usize) !void {
+    if (std.mem.eql(u8, name, "canada.json")) return runStdDecode(CanadaDocument, "std.json typed decode", input, repeats);
+    if (std.mem.eql(u8, name, "github_events.json")) return runStdDecode([]const GithubEvent, "std.json typed decode", input, repeats);
+    if (std.mem.eql(u8, name, "poet.json")) return runStdDecode([]const Poem, "std.json typed decode", input, repeats);
+    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runStdDecode(TwitterDocument, "std.json typed decode", input, repeats);
+    return error.InvalidArguments;
+}
+
+fn runStdTypedEncode(name: []const u8, input: []const u8, repeats: usize) !void {
+    if (std.mem.eql(u8, name, "canada.json")) return runStdEncode(CanadaDocument, "std.json typed encode", input, repeats);
+    if (std.mem.eql(u8, name, "github_events.json")) return runStdEncode([]const GithubEvent, "std.json typed encode", input, repeats);
+    if (std.mem.eql(u8, name, "poet.json")) return runStdEncode([]const Poem, "std.json typed encode", input, repeats);
+    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runStdEncode(TwitterDocument, "std.json typed encode", input, repeats);
+    return error.InvalidArguments;
+}
+
 fn runDecode(comptime T: type, name: []const u8, input: []const u8, repeats: usize) !void {
     var warmup_arena = std.heap.ArenaAllocator.init(input_allocator);
     defer warmup_arena.deinit();
@@ -316,6 +346,66 @@ fn runEncode(comptime T: type, name: []const u8, input: []const u8, repeats: usi
         total_bytes / seconds / (1024.0 * 1024.0),
         warmup.len,
     });
+}
+
+fn runStdDecode(comptime T: type, name: []const u8, input: []const u8, repeats: usize) !void {
+    var warmup_arena = std.heap.ArenaAllocator.init(input_allocator);
+    defer warmup_arena.deinit();
+    _ = try std.json.parseFromSliceLeaky(T, warmup_arena.allocator(), input, .{ .ignore_unknown_fields = true });
+
+    var elapsed: u64 = 0;
+    for (0..repeats) |_| {
+        var arena = std.heap.ArenaAllocator.init(input_allocator);
+        defer arena.deinit();
+        const start = nowNanoseconds();
+        const value = try std.json.parseFromSliceLeaky(T, arena.allocator(), input, .{ .ignore_unknown_fields = true });
+        const end = nowNanoseconds();
+        std.mem.doNotOptimizeAway(value);
+        elapsed += @max(end - start, 1);
+    }
+
+    const total_bytes: f64 = @floatFromInt(input.len * repeats);
+    const seconds: f64 = @as(f64, @floatFromInt(elapsed)) / std.time.ns_per_s;
+    std.debug.print("  {s}: {d:.6} ms/op, {d:.2} MiB/s\n", .{
+        name,
+        @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(repeats)) / std.time.ns_per_ms,
+        total_bytes / seconds / (1024.0 * 1024.0),
+    });
+}
+
+fn runStdEncode(comptime T: type, name: []const u8, input: []const u8, repeats: usize) !void {
+    var fixture_arena = std.heap.ArenaAllocator.init(input_allocator);
+    defer fixture_arena.deinit();
+    const value = try std.json.parseFromSliceLeaky(T, fixture_arena.allocator(), input, .{ .ignore_unknown_fields = true });
+
+    const warmup = try stdEncode(input_allocator, value);
+    defer input_allocator.free(warmup);
+
+    var elapsed: u64 = 0;
+    for (0..repeats) |_| {
+        const start = nowNanoseconds();
+        const encoded = try stdEncode(input_allocator, value);
+        const end = nowNanoseconds();
+        std.mem.doNotOptimizeAway(encoded.ptr);
+        input_allocator.free(encoded);
+        elapsed += @max(end - start, 1);
+    }
+
+    const total_bytes: f64 = @floatFromInt(warmup.len * repeats);
+    const seconds: f64 = @as(f64, @floatFromInt(elapsed)) / std.time.ns_per_s;
+    std.debug.print("  {s}: {d:.6} ms/op, {d:.2} MiB/s ({d} bytes)\n", .{
+        name,
+        @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(repeats)) / std.time.ns_per_ms,
+        total_bytes / seconds / (1024.0 * 1024.0),
+        warmup.len,
+    });
+}
+
+fn stdEncode(allocator: Allocator, value: anytype) ![]u8 {
+    var output: std.Io.Writer.Allocating = .init(allocator);
+    errdefer output.deinit();
+    try std.json.Stringify.value(value, .{}, &output.writer);
+    return output.toOwnedSlice();
 }
 
 fn isTypedDataset(name: []const u8) bool {

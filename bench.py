@@ -77,6 +77,19 @@ FORMATS = ("json", "msgpack")
 MODES = ("generic", "typed")
 OPERATIONS = ("decode", "encode")
 FORMAT_LABELS = {"json": "JSON", "msgpack": "MessagePack"}
+IMPLEMENTATIONS = ("serde", "std.json")
+
+
+def implementations_for_format(format_name: str) -> tuple[str, ...]:
+    return IMPLEMENTATIONS if format_name == "json" else ("serde",)
+
+
+def implementation_argument(implementation: str) -> str:
+    return "std" if implementation == "std.json" else implementation
+
+
+def implementation_directory(implementation: str) -> str:
+    return "serde.zig" if implementation == "serde" else "std"
 
 DATASET_RE = re.compile(
     r"^\s*(?P<dataset>\S+)\s+\((?P<input_bytes>\d+) bytes,\s+(?P<repeats>\d+) repeats\)\s*$"
@@ -94,6 +107,7 @@ class Measurement:
     """One metric line from one benchmark process."""
 
     format: str
+    implementation: str
     mode: str
     dataset: str
     operation: str
@@ -131,6 +145,7 @@ def selected_values(value: str, choices: Sequence[str], name: str) -> tuple[str,
 
 def build_command(
     format_name: str,
+    implementation: str,
     mode: str,
     zig: str,
     optimize: str | None,
@@ -140,9 +155,14 @@ def build_command(
 ) -> list[str]:
     if no_build:
         binary = binary_dir / f"{format_name}-bench"
-        return [str(binary), mode]
+        arguments = [str(binary), mode]
+        if format_name == "json":
+            arguments.append(implementation_argument(implementation))
+        return arguments
 
     command = [zig, "build", f"bench-{format_name}", f"-Dmode={mode}"]
+    if format_name == "json":
+        command.append(f"-Dimplementation={implementation_argument(implementation)}")
     if optimize:
         command.append(f"-Doptimize={optimize}")
     return command
@@ -169,11 +189,13 @@ def parse_output(output: str, format_name: str, mode: str, run: int) -> list[Mea
             raise RuntimeError(f"found metric before a dataset header: {line!r}")
 
         label = metric_match.group("label").strip().lower()
+        implementation = "std.json" if label.startswith("std.json ") else "serde"
         operation = "encode" if label.endswith(" encode") else "decode"
         output_bytes = metric_match.group("output_bytes")
         measurements.append(
             Measurement(
                 format=format_name,
+                implementation=implementation,
                 mode=mode,
                 dataset=current_dataset,
                 operation=operation,
@@ -188,26 +210,26 @@ def parse_output(output: str, format_name: str, mode: str, run: int) -> list[Mea
     return measurements
 
 
-def expected_measurements(format_name: str, mode: str) -> set[tuple[str, str]]:
+def expected_measurements(format_name: str, implementation: str, mode: str) -> set[tuple[str, str, str]]:
     datasets = TYPED_DATASETS if mode == "typed" else frozenset(DATASETS)
-    return {(dataset, operation) for dataset in datasets for operation in OPERATIONS}
+    return {(implementation, dataset, operation) for dataset in datasets for operation in OPERATIONS}
 
 
-def validate_measurements(measurements: Sequence[Measurement], format_name: str, mode: str) -> None:
-    actual = [(item.dataset, item.operation) for item in measurements]
+def validate_measurements(measurements: Sequence[Measurement], format_name: str, implementation: str, mode: str) -> None:
+    actual = [(item.implementation, item.dataset, item.operation) for item in measurements]
     if len(actual) != len(set(actual)):
         raise RuntimeError(f"{format_name}/{mode}: duplicate metric lines in benchmark output")
 
-    expected = expected_measurements(format_name, mode)
+    expected = expected_measurements(format_name, implementation, mode)
     actual_set = set(actual)
     missing = sorted(expected - actual_set)
     unexpected = sorted(actual_set - expected)
     if missing or unexpected:
         details: list[str] = []
         if missing:
-            details.append("missing " + ", ".join(f"{dataset}/{operation}" for dataset, operation in missing))
+            details.append("missing " + ", ".join(f"{implementation}/{dataset}/{operation}" for implementation, dataset, operation in missing))
         if unexpected:
-            details.append("unexpected " + ", ".join(f"{dataset}/{operation}" for dataset, operation in unexpected))
+            details.append("unexpected " + ", ".join(f"{implementation}/{dataset}/{operation}" for implementation, dataset, operation in unexpected))
         raise RuntimeError(f"{format_name}/{mode}: " + "; ".join(details))
 
 
@@ -243,45 +265,47 @@ def run_benchmarks(
     runs: int,
     command_options: argparse.Namespace,
     output_dir: Path,
-) -> tuple[list[Measurement], dict[tuple[str, str], list[str]]]:
+) -> tuple[list[Measurement], dict[tuple[str, str, str], list[str]]]:
     all_measurements: list[Measurement] = []
-    commands: dict[tuple[str, str], list[str]] = {}
+    commands: dict[tuple[str, str, str], list[str]] = {}
 
     for format_name in formats:
-        raw_dir = output_dir / format_name
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        for mode in modes:
-            command = build_command(
-                format_name,
-                mode,
-                command_options.zig,
-                command_options.optimize,
-                no_build=command_options.no_build,
-                binary_dir=command_options.binary_dir,
-            )
-            commands[(format_name, mode)] = command
-            for run in range(1, runs + 1):
-                print(f"[{format_name}/{mode}] run {run}/{runs}: {' '.join(command)}", flush=True)
-                output = run_process(command)
-                raw_path = raw_dir / f"{format_name}-{mode}-{run:02d}.txt"
-                raw_path.write_text(output, encoding="utf-8")
-                parsed = parse_output(output, format_name, mode, run)
-                validate_measurements(parsed, format_name, mode)
-                all_measurements.extend(parsed)
-                print(f"  parsed {len(parsed)} measurements -> {raw_path}", flush=True)
+        for implementation in implementations_for_format(format_name):
+            raw_dir = output_dir / format_name / implementation_directory(implementation)
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            for mode in modes:
+                command = build_command(
+                    format_name,
+                    implementation,
+                    mode,
+                    command_options.zig,
+                    command_options.optimize,
+                    no_build=command_options.no_build,
+                    binary_dir=command_options.binary_dir,
+                )
+                commands[(format_name, implementation, mode)] = command
+                for run in range(1, runs + 1):
+                    print(f"[{format_name}/{implementation}/{mode}] run {run}/{runs}: {' '.join(command)}", flush=True)
+                    output = run_process(command)
+                    raw_path = raw_dir / f"{mode}-{run:02d}.txt"
+                    raw_path.write_text(output, encoding="utf-8")
+                    parsed = parse_output(output, format_name, mode, run)
+                    validate_measurements(parsed, format_name, implementation, mode)
+                    all_measurements.extend(parsed)
+                    print(f"  parsed {len(parsed)} measurements -> {raw_path}", flush=True)
 
     return all_measurements, commands
 
 
 def aggregate(measurements: Iterable[Measurement]) -> list[dict[str, object]]:
-    groups: dict[tuple[str, str, str, str], list[Measurement]] = {}
+    groups: dict[tuple[str, str, str, str, str], list[Measurement]] = {}
     for measurement in measurements:
-        key = (measurement.format, measurement.mode, measurement.dataset, measurement.operation)
+        key = (measurement.format, measurement.implementation, measurement.mode, measurement.dataset, measurement.operation)
         groups.setdefault(key, []).append(measurement)
 
     rows: list[dict[str, object]] = []
     for key in sorted(groups):
-        format_name, mode, dataset, operation = key
+        format_name, implementation, mode, dataset, operation = key
         samples = groups[key]
         durations = [sample.milliseconds for sample in samples]
         measured_bytes = {sample.measured_bytes for sample in samples}
@@ -294,6 +318,7 @@ def aggregate(measurements: Iterable[Measurement]) -> list[dict[str, object]]:
         rows.append(
             {
                 "format": format_name,
+                "implementation": implementation,
                 "mode": mode,
                 "dataset": dataset,
                 "operation": operation,
@@ -315,6 +340,7 @@ def aggregate(measurements: Iterable[Measurement]) -> list[dict[str, object]]:
 def write_csv(path: Path, rows: Sequence[dict[str, object]]) -> None:
     fields = [
         "format",
+        "implementation",
         "mode",
         "dataset",
         "operation",
@@ -336,9 +362,9 @@ def write_csv(path: Path, rows: Sequence[dict[str, object]]) -> None:
 
 
 def write_markdown(path: Path, rows: Sequence[dict[str, object]], runs: int) -> None:
-    by_key = {(str(row["format"]), str(row["mode"]), str(row["dataset"]), str(row["operation"])): row for row in rows}
-    series_order = [(format_name, mode) for format_name in FORMATS for mode in MODES]
-    datasets = [dataset for dataset in DATASETS if any(key[2] == dataset for key in by_key)]
+    by_key = {(str(row["format"]), str(row["implementation"]), str(row["mode"]), str(row["dataset"]), str(row["operation"])): row for row in rows}
+    series_order = [(format_name, implementation, mode) for format_name in FORMATS for implementation in IMPLEMENTATIONS for mode in MODES]
+    datasets = [dataset for dataset in DATASETS if any(key[3] == dataset for key in by_key)]
 
     lines = [
         "# serde.zig benchmark results",
@@ -349,9 +375,9 @@ def write_markdown(path: Path, rows: Sequence[dict[str, object]], runs: int) -> 
     ]
     for operation in OPERATIONS:
         available = [
-            (format_name, mode)
-            for format_name, mode in series_order
-            if any((format_name, mode, dataset, operation) in by_key for dataset in datasets)
+            (format_name, implementation, mode)
+            for format_name, implementation, mode in series_order
+            if any((format_name, implementation, mode, dataset, operation) in by_key for dataset in datasets)
         ]
         if not available:
             continue
@@ -360,15 +386,15 @@ def write_markdown(path: Path, rows: Sequence[dict[str, object]], runs: int) -> 
                 f"## {operation.title()} throughput",
                 "",
                 "| Dataset | "
-                + " | ".join(f"{FORMAT_LABELS[format_name]} / {mode}" for format_name, mode in available)
+                + " | ".join(f"{FORMAT_LABELS[format_name]} / {implementation} / {mode}" for format_name, implementation, mode in available)
                 + " |",
                 "| --- | " + " | ".join("---:" for _ in available) + " |",
             ]
         )
         for dataset in datasets:
             values: list[str] = []
-            for format_name, mode in available:
-                row = by_key.get((format_name, mode, dataset, operation))
+            for format_name, implementation, mode in available:
+                row = by_key.get((format_name, implementation, mode, dataset, operation))
                 values.append("-" if row is None else f"{float(row['throughput_gb_s']):.3f} GB/s")
             lines.append(f"| {dataset.removesuffix('.json')} | " + " | ".join(values) + " |")
         lines.append("")
@@ -387,22 +413,14 @@ def load_summary(path: Path) -> tuple[list[dict[str, object]], int]:
 
 HIGHCHARTS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/highcharts/8.2.0/"
 
-FORMAT_SERIES_ORDER = (
-    ("json", "generic"),
-    ("json", "typed"),
-    ("msgpack", "generic"),
-    ("msgpack", "typed"),
-)
-
 def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) -> None:
     """Write an interactive Highcharts page (library from CDN, like yyjson).
 
-    Layout: a throughput-and-size ranking over the shared typed corpus, then
-    JSON-vs-MessagePack encode and decode comparisons, followed by encode and
-    decode charts for each format. No Python chart library.
+    Layout: encode and decode charts for each format, with implementation and
+    representation shown as separate series. No Python chart library.
     """
     by_key = {
-        (str(row["format"]), str(row["mode"]), str(row["dataset"]), str(row["operation"])): row
+        (str(row["format"]), str(row["implementation"]), str(row["mode"]), str(row["dataset"]), str(row["operation"])): row
         for row in rows
     }
     chart_counter = 0
@@ -446,8 +464,8 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
         nonlocal chart_counter
         chart_counter += 1
         container_id = f"chart-{chart_counter}"
-        ranked = sorted(entries, key=lambda entry: float(entry["throughput"]), reverse=True)
-        max_throughput = max(float(entry["throughput"]) for entry in ranked)
+        ranked = sorted(entries, key=lambda entry: float(entry["ops_per_sec"]), reverse=True)
+        max_ops = max(float(entry["ops_per_sec"]) for entry in ranked)
         max_size = max(float(entry["size_bytes"]) for entry in ranked)
 
         def point(value: float, maximum: float, absolute: str) -> dict[str, object]:
@@ -457,11 +475,8 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
             "chart": {"type": "bar", "height": 360, "backgroundColor": "transparent", "animation": True},
             "title": {"text": None},
             "credits": {"enabled": False},
-            "exporting": {"filename": "throughput-size-ranking"},
-            "xAxis": {
-                "categories": [str(entry["name"]) for entry in ranked],
-                "title": {"text": None},
-            },
+            "exporting": {"filename": "combined-ops-size-ranking"},
+            "xAxis": {"categories": [str(entry["name"]) for entry in ranked], "title": {"text": None}},
             "yAxis": {
                 "min": -100,
                 "max": 100,
@@ -481,26 +496,12 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
                 {
                     "name": "Encoded size",
                     "color": "#3a9d58",
-                    "data": [
-                        point(
-                            -float(entry["size_bytes"]),
-                            max_size,
-                            f"{float(entry['size_bytes']) / 1024.0:.1f} KiB",
-                        )
-                        for entry in ranked
-                    ],
+                    "data": [point(-float(entry["size_bytes"]), max_size, f"{float(entry['size_bytes']) / 1024.0:.1f} KiB") for entry in ranked],
                 },
                 {
-                    "name": "Throughput",
+                    "name": "Combined ops/s",
                     "color": "#3478dc",
-                    "data": [
-                        point(
-                            float(entry["throughput"]),
-                            max_throughput,
-                            f"{float(entry['throughput']):.3f} GB/s",
-                        )
-                        for entry in ranked
-                    ],
+                    "data": [point(float(entry["ops_per_sec"]), max_ops, f"{float(entry['ops_per_sec']):.0f} ops/s") for entry in ranked],
                 },
             ],
         }
@@ -511,26 +512,27 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
 
     def series_points(
         key_format: str,
+        key_implementation: str,
         key_mode: str,
         operation: str,
         datasets: list[str],
     ) -> list[float | None]:
         return [
             None
-            if (key_format, key_mode, dataset, operation) not in by_key
-            else float(by_key[(key_format, key_mode, dataset, operation)]["throughput_gb_s"])
+            if (key_format, key_implementation, key_mode, dataset, operation) not in by_key
+            else float(by_key[(key_format, key_implementation, key_mode, dataset, operation)]["throughput_gb_s"])
             for dataset in datasets
         ]
 
     def collect_series(
-        series_specs: list[tuple[str, str, str, str, list[str]]],
+        series_specs: list[tuple[str, str, str, str, str, list[str]]],
     ) -> list[dict[str, object]]:
         result: list[dict[str, object]] = []
-        for name, key_format, key_mode, operation, datasets in series_specs:
+        for name, key_format, key_implementation, key_mode, operation, datasets in series_specs:
             result.append(
                 {
                     "name": name,
-                    "data": series_points(key_format, key_mode, operation, datasets),
+                    "data": series_points(key_format, key_implementation, key_mode, operation, datasets),
                 }
             )
         return result
@@ -539,68 +541,48 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
         detail = "" if not description else f'<p class="chart-note">{description}</p>\n'
         return "<section class=\"plot\">\n" f"<h2>{heading}</h2>\n{detail}{plot}\n" "</section>"
 
-    # Top comparisons use only datasets with typed models in both formats.
+    sections: list[str] = []
     compare_datasets = [
         dataset
         for dataset in DATASETS
-        if any((format_name, "typed", dataset, "decode") in by_key for format_name in FORMATS)
+        if any(("json", implementation, "typed", dataset, "decode") in by_key for implementation in implementations_for_format("json"))
+        and ("msgpack", "serde", "typed", dataset, "decode") in by_key
     ]
-
-    sections: list[str] = []
     ranking_entries: list[dict[str, object]] = []
-    for format_name, mode in FORMAT_SERIES_ORDER:
-        throughput_samples: list[float] = []
-        encoded_sizes: list[int] = []
-        for dataset in compare_datasets:
-            for operation in OPERATIONS:
-                row = by_key.get((format_name, mode, dataset, operation))
-                if row is None:
+    for format_name in FORMATS:
+        for implementation in implementations_for_format(format_name):
+            ops_samples: list[float] = []
+            encoded_sizes: list[int] = []
+            for dataset in compare_datasets:
+                decode = by_key.get((format_name, implementation, "typed", dataset, "decode"))
+                encode = by_key.get((format_name, implementation, "typed", dataset, "encode"))
+                if decode is None or encode is None:
                     break
-                throughput_samples.append(float(row["throughput_gb_s"]))
-            else:
-                encoded = by_key[(format_name, mode, dataset, "encode")]["output_bytes"]
+                total_ms = float(decode["median_ms"]) + float(encode["median_ms"])
+                if total_ms <= 0:
+                    break
+                ops_samples.append(1000.0 / total_ms)
+                encoded = encode["output_bytes"]
                 if encoded is not None:
                     encoded_sizes.append(int(encoded))
-                continue
-            break
-        if len(throughput_samples) == len(compare_datasets) * len(OPERATIONS) and len(encoded_sizes) == len(compare_datasets):
-            ranking_entries.append(
-                {
-                    "name": f"{FORMAT_LABELS[format_name]} / {mode}",
-                    "throughput": statistics.geometric_mean(throughput_samples),
-                    "size_bytes": statistics.geometric_mean(encoded_sizes),
-                }
-            )
+            if len(ops_samples) == len(compare_datasets) and len(encoded_sizes) == len(compare_datasets):
+                ranking_entries.append(
+                    {
+                        "name": f"{FORMAT_LABELS[format_name]} / {implementation}",
+                        "ops_per_sec": statistics.geometric_mean(ops_samples),
+                        "size_bytes": statistics.geometric_mean(encoded_sizes),
+                    }
+                )
     if ranking_entries:
         sections.append(
             card(
-                "Throughput & Size Ranking",
+                "Combined Ops/s & Size Ranking",
                 ranking_chart_html(ranking_entries),
-                "Sorted by geometric-mean throughput across encode and decode on the shared typed corpus. "
-                "Encoded size extends left and throughput right; both sides are normalized independently. "
+                "Sorted by geometric-mean combined ops/s across encode and decode on the shared typed corpus. "
+                "Encoded size extends left and combined ops/s right; both sides are normalized independently. "
                 "Hover for absolute values.",
             )
         )
-
-    for operation in OPERATIONS:
-        compare_series = collect_series(
-            [
-                (
-                    f"{FORMAT_LABELS[format_name]} / {mode}",
-                    format_name,
-                    mode,
-                    operation,
-                    compare_datasets,
-                )
-                for format_name, mode in FORMAT_SERIES_ORDER
-                if any((format_name, mode, dataset, operation) in by_key for dataset in compare_datasets)
-            ]
-        )
-        if compare_series:
-            sections.append(card(
-                f"JSON vs MessagePack — shared typed datasets ({operation})",
-                chart_html(compare_datasets, compare_series, 460, f"json-vs-msgpack-{operation}"),
-            ))
 
     # One encode and one decode card for each format.
     for format_name in FORMATS:
@@ -609,7 +591,8 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
             dataset
             for dataset in DATASETS
             if any(
-                (format_name, mode, dataset, operation) in by_key
+                (format_name, implementation, mode, dataset, operation) in by_key
+                for implementation in implementations_for_format(format_name)
                 for mode in MODES
                 for operation in OPERATIONS
             )
@@ -618,7 +601,8 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
             dataset
             for dataset in available_datasets
             if any(
-                (format_name, "typed", dataset, operation) in by_key
+                (format_name, implementation, "typed", dataset, operation) in by_key
+                for implementation in implementations_for_format(format_name)
                 for operation in OPERATIONS
             )
         ]
@@ -633,14 +617,16 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
             series = collect_series(
                 [
                     (
-                        mode,
+                        f"{implementation} / {mode}",
                         format_name,
+                        implementation,
                         mode,
                         operation,
                         group_datasets,
                     )
+                    for implementation in implementations_for_format(format_name)
                     for mode in MODES
-                    if any((format_name, mode, dataset, operation) in by_key for dataset in group_datasets)
+                    if any((format_name, implementation, mode, dataset, operation) in by_key for dataset in group_datasets)
                 ]
             )
             if series:
@@ -656,7 +642,7 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], runs: int) ->
 
     body = "\n".join(sections)
     note = (
-        f"Median of {runs} process run(s) · serde.zig {serde_version()} · "
+        f"Median of {runs} process run(s) · serde.zig {serde_version()} and std.json · "
         "timed path excludes file loading and cleanup."
     )
     html = f"""<!doctype html>
@@ -780,7 +766,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "python": platform.python_version(),
             "platform": platform.platform(),
             "runs": args.runs,
-            "commands": {f"{format_name}/{mode}": command for (format_name, mode), command in commands.items()},
+            "commands": {f"{format_name}/{implementation}/{mode}": command for (format_name, implementation, mode), command in commands.items()},
         }
         payload = {
             "metadata": metadata,
