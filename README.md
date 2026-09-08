@@ -12,10 +12,12 @@ uv run bench.py
 ```
 
 `uv run bench.py` runs all benchmarks and writes `index.html`,
-`summary.csv` and `summary.md` into `bench-results/`, then opens the page in
+`summary.csv` and `summary.md` into `results/single_thread/`, then opens the page in
 your browser. It builds with `-Doptimize=ReleaseFast` and has no Python
 dependencies (the page loads Highcharts from a CDN, so the first open needs
-network). Raw data stays in `bench-results/`. The page leads with a throughput-
+network). Raw JSON and MessagePack logs are kept separately in
+`results/single_thread/json/` and `results/single_thread/msgpack/`.
+The combined summary stays in `results/single_thread/`. The page leads with a throughput-
 and-size ranking over the shared typed corpus, using geometric means to balance
 the datasets. It then shows JSON-vs-MessagePack comparisons for decode and
 encode, followed by JSON and MessagePack decode/encode charts with generic and
@@ -51,3 +53,21 @@ zig build bench-msgpack -Doptimize=ReleaseFast
 ```
 
 `-Dmode=typed` selects the typed subset.
+
+## Parallel scaling
+
+The parallel benchmark is separate from the single-threaded report. It runs
+the typed JSON and MessagePack corpora with independent worker arenas and
+reports total throughput plus speedup relative to one worker:
+
+```sh
+uv run bench-parallel.py
+uv run bench-parallel.py --thread 8
+uv run bench-parallel.py --format msgpack
+```
+
+The report is written to `results/parallel/index.html`; raw logs are separated
+by format under `results/parallel/json/` and `results/parallel/msgpack/`.
+The combined summary stays in `results/parallel/`. The tested thread counts
+double from one worker and include the selected maximum when it is not a power
+of two.

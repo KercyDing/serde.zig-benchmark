@@ -1,7 +1,7 @@
 .zig-cache/
 zig-out/
 zig-pkg/
-bench-results/
+results/
 __pycache__/
 
 .DS_Store
