@@ -604,6 +604,12 @@ def parser() -> argparse.ArgumentParser:
         help="independent process runs per format (default: 10)",
     )
     result.add_argument(
+        "--thread",
+        type=positive_int,
+        default=None,
+        help="also run a thread-scaling sweep up to N workers (default: none)",
+    )
+    result.add_argument(
         "--output",
         dest="exports",
         action="append",
@@ -666,11 +672,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         write_html_page(page, summary, runs)
         written.append(page)
 
+    open_pages = [page] if page else []
+    if args.thread is not None:
+        from scaling import run_scaling
+
+        extra, scaling_page = run_scaling(
+            formats=formats,
+            runs=args.runs,
+            max_threads=args.thread,
+            output_dir=output_dir,
+            exports=args.exports,
+        )
+        written.extend(extra)
+        if scaling_page is not None:
+            open_pages.append(scaling_page)
+
     for path in written:
         print(f"wrote {path}")
-    if page is not None:
-        webbrowser.open(page.resolve().as_uri())
-        print(f"opened {page} in your browser")
+    for page_path in open_pages:
+        webbrowser.open(page_path.resolve().as_uri())
+        print(f"opened {page_path} in your browser")
     return 0
 
 

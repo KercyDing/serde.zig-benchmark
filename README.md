@@ -29,20 +29,11 @@ libraries that can complete it with their native API. It builds with
 `-Doptimize=ReleaseFast` and has no Python dependencies. The page loads
 Highcharts from a CDN, so the first open needs network.
 
-### `bench-parallel.py`
+Thread scaling is the same engine with an extra dimension: pass `--thread N`
+to sweep workers 1, 2, 4, ... N. Scaling results are written to
+`scaling.csv`, `scaling.md`, and `scaling.html` next to the normal reports.
 
-The parallel runner measures JSON and MessagePack scaling with independent
-worker arenas.
-
-```sh
-uv run bench/bench-parallel.py
-```
-
-The report is written to `results/parallel/`.
-
-Thread counts double from one worker and include the selected maximum when it
-is not a power of two.
-
+## Options
 ## Options
 
 | Script | Option | Description |

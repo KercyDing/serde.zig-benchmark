@@ -1,10 +1,7 @@
-"""Run serde.zig parallel scaling benchmarks and render an HTML report.
+"""Scaling experiment (thread sweep) on the shared benchmark engine.
 
-Examples::
-
-    uv run bench/bench-parallel.py
-    uv run bench/bench-parallel.py --format msgpack --thread 8 --runs 5
-    uv run bench/bench-parallel.py --plot-only
+Run from bench.py with ``--thread N``; writes scaling.csv / scaling.md /
+scaling.html into the same results directory.
 """
 
 import argparse
@@ -20,7 +17,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypedDict, cast
-from engine import positive_int, thread_counts, run_process, run_repetitions
+from engine import thread_counts, run_repetitions
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = ROOT / "results" / "parallel"
@@ -80,19 +77,18 @@ def selected_formats(format_name: str) -> tuple[str, ...]:
     return FORMATS if format_name == "all" else (format_name,)
 
 
-def build_command(args: argparse.Namespace, format_name: str, implementation: str, mode: str) -> list[str]:
-    command = [
-        args.zig,
+def build_command(max_threads: int, format_name: str, implementation: str, mode: str) -> list[str]:
+    return [
+        os.environ.get("ZIG", "zig"),
         "build",
         "bench-parallel",
-        f"-Dmax-threads={args.thread}",
+        f"-Dmax-threads={max_threads}",
         f"-Dformat={format_name}",
         f"-Dimplementation={implementation_argument(implementation)}",
         f"-Dmode={mode}",
+        "-Doptimize=ReleaseFast",
     ]
-    if args.optimize:
-        command.append(f"-Doptimize={args.optimize}")
-    return command
+
 
 
 def parse_output(output: str, run: int, mode: str) -> list[Measurement]:
@@ -299,115 +295,65 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], formats: Sequence[st
     path.write_text(html, encoding="utf-8")
 
 
-def parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(description=__doc__)
-    result.add_argument("--format", dest="format_name", choices=("json", "msgpack", "all"), default="all", help="benchmark one format or both (default: all)")
-    result.add_argument("--mode", choices=("generic", "typed", "all"), default="typed", help="representation(s) to benchmark (default: typed)")
-    result.add_argument("--thread", type=positive_int, default=os.cpu_count() or 1, help="maximum worker threads (default: all logical CPUs)")
-    result.add_argument("--runs", type=positive_int, default=10, help="independent process runs (default: 10)")
-    result.add_argument("--output", dest="exports", action="append", choices=("csv", "md"), default=None, help="write only the chosen summary file(s), without the page (repeatable)")
-    result.add_argument("--no-plot", action="store_true", help="write summary.csv and summary.md without the page")
-    result.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT, help=f"directory for index.html, measurements.json, and raw logs (default: {DEFAULT_OUTPUT})")
-    result.add_argument("--zig", default=os.environ.get("ZIG", "zig"), help="Zig executable (default: $ZIG or zig)")
-    result.add_argument("--optimize", default="ReleaseFast", help="optimization mode forwarded as -Doptimize (default: ReleaseFast)")
-    result.add_argument("--plot-only", action="store_true", help="rebuild index.html from saved measurements.json")
-    return result
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    args = parser().parse_args(argv)
-    output_dir = args.output_dir.resolve()
+def run_scaling(
+    *,
+    formats: Sequence[str],
+    runs: int,
+    max_threads: int,
+    output_dir: Path,
+    exports: Sequence[str] | None = None,
+) -> tuple[list[Path], Path | None]:
+    """Thread sweep for the given formats. Returns written paths and the page path."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    summary_path = output_dir / "measurements.json"
-
-    if args.plot_only:
-        if not summary_path.is_file():
-            raise SystemExit(f"--plot-only requires {summary_path}")
-        payload = json.loads(summary_path.read_text(encoding="utf-8"))
-        summary = cast(list[SummaryRow], [{**row, "mode": row.get("mode", "typed")} for row in payload["summary"]])
-        runs = int(payload["metadata"]["runs"])
-        max_threads = int(payload["metadata"]["max_threads"])
-        saved_formats = tuple(payload["metadata"]["formats"])
-        formats = tuple(format_name for format_name in saved_formats if format_name in selected_formats(args.format_name))
-        saved_modes = tuple(payload["metadata"].get("modes", ("typed",)))
-        modes = tuple(mode for mode in saved_modes if args.mode == "all" or mode == args.mode)
-        if not formats:
-            raise SystemExit(f"--format {args.format_name} has no saved parallel measurements")
-        summary = [row for row in summary if str(row["format"]) in formats and str(row["mode"]) in modes]
-    else:
-        measurements: list[Measurement] = []
-        formats = selected_formats(args.format_name)
-        modes = ("generic", "typed") if args.mode == "all" else (args.mode,)
-        commands: dict[str, list[str]] = {}
-        for format_name in formats:
-            for implementation in implementations_for_format(format_name):
-                for mode in modes:
-                    command = build_command(args, format_name, implementation, mode)
-                    commands[f"{format_name}/{implementation}/{mode}"] = command
-                    raw_dir = output_dir / format_name / implementation_directory(implementation)
-                    raw_dir.mkdir(parents=True, exist_ok=True)
-                    collected = run_repetitions(
-                        label=f"{format_name}/{implementation}/{mode}",
-                        command=command,
-                        raw_dir=raw_dir,
-                        stem=f"{mode}-parallel",
-                        runs=args.runs,
-                        parse=lambda out, run, m=mode: parse_output(out, run, m),
-                        validate=lambda meas, f=format_name, i=implementation, m=mode, t=args.thread: validate_measurements(meas, f, i, m, t),
-                    )
-                    measurements.extend(cast(list[Measurement], collected))
-        summary = aggregate(measurements)
-        runs = args.runs
-        max_threads = args.thread
-        payload = {
-            "metadata": {
-                "generated_at": datetime.now(timezone.utc).isoformat(),
-                "runs": runs,
-                "max_threads": max_threads,
-                "formats": formats,
-                "modes": modes,
-                "commands": commands,
-            },
-            "measurements": [asdict(measurement) for measurement in measurements],
-            "summary": summary,
-        }
-        summary_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-
-    if args.exports:
-        want_csv = "csv" in args.exports
-        want_md = "md" in args.exports
-        want_page = False
-    elif args.no_plot:
-        want_csv, want_md, want_page = True, True, False
-    else:
-        want_csv, want_md, want_page = True, True, True
-
-    written: list[Path] = [] if args.plot_only else [summary_path]
+    summary_path = output_dir / "scaling-measurements.json"
+    measurements: list[Measurement] = []
+    commands: dict[str, list[str]] = {}
+    modes = ("generic", "typed")
+    for format_name in formats:
+        for implementation in implementations_for_format(format_name):
+            for mode in modes:
+                command = build_command(max_threads, format_name, implementation, mode)
+                commands[f"{format_name}/{implementation}/{mode}"] = command
+                raw_dir = output_dir / "parallel" / implementation_directory(implementation)
+                collected = run_repetitions(
+                    label=f"scale/{format_name}/{implementation}/{mode}",
+                    command=command,
+                    raw_dir=raw_dir,
+                    stem=f"{mode}-parallel",
+                    runs=runs,
+                    parse=lambda out, run, m=mode: parse_output(out, run, m),
+                    validate=lambda meas, f=format_name, i=implementation, m=mode, mt=max_threads: validate_measurements(meas, f, i, m, mt),
+                )
+                measurements.extend(cast(list[Measurement], collected))
+    summary = aggregate(measurements)
+    payload = {
+        "metadata": {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "runs": runs,
+            "max_threads": max_threads,
+            "formats": list(formats),
+            "modes": list(modes),
+            "commands": commands,
+        },
+        "measurements": [asdict(measurement) for measurement in measurements],
+        "summary": summary,
+    }
+    summary_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    written: list[Path] = [summary_path]
+    want_csv = exports is None or "csv" in exports
+    want_md = exports is None or "md" in exports
+    want_page = exports is None
     if want_csv:
-        csv_path = output_dir / "summary.csv"
+        csv_path = output_dir / "scaling.csv"
         write_csv(csv_path, summary)
         written.append(csv_path)
     if want_md:
-        markdown_path = output_dir / "summary.md"
-        write_markdown(markdown_path, summary, formats, modes, max_threads)
-        written.append(markdown_path)
-    page: Path | None = None
+        md_path = output_dir / "scaling.md"
+        write_markdown(md_path, summary, formats, modes, max_threads)
+        written.append(md_path)
+    page_path: Path | None = None
     if want_page:
-        page = output_dir / "index.html"
-        assert page is not None
-        write_html_page(page, summary, formats, modes, runs, max_threads)
-        written.append(page)
-
-    for path in written:
-        print(f"wrote {path}")
-    if page is not None:
-        webbrowser.open(page.resolve().as_uri())
-    return 0
-
-
-if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except RuntimeError as exc:
-        print(f"bench-parallel.py: error: {exc}", file=sys.stderr)
-        raise SystemExit(1) from exc
+        page_path = output_dir / "scaling.html"
+        write_html_page(page_path, summary, formats, modes, runs, max_threads)
+        written.append(page_path)
+    return written, page_path
