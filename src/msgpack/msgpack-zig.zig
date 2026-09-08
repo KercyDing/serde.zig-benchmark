@@ -8,7 +8,7 @@ const input_allocator = common.input_allocator;
 const data_limit = common.data_limit;
 const datasets = common.datasets;
 const repeatCount = common.repeatCount;
-const isKnownDataset = common.isTypedDataset;
+const isKnownDataset = common.isKnownDataset;
 const isTypedDataset = common.isTypedDataset;
 const nowNanoseconds = common.nowNanoseconds;
 const GithubEvent = common.GithubEvent;
@@ -16,7 +16,7 @@ const Poem = common.Poem;
 const TwitterDocument = common.TwitterDocument;
 
 // ---------------------------------------------------------------------------
-// msgpack.zig (lalinsky) — typed corpus, self-consistent wire fixtures.
+// msgpack.zig (lalinsky) — known-data tasks.
 // ---------------------------------------------------------------------------
 
 fn lalEncode(allocator: Allocator, value: anytype) ![]u8 {
@@ -131,13 +131,6 @@ fn runKnownEncode(name: []const u8, input: []const u8, repeats: usize) !void {
     if (std.mem.eql(u8, name, "github_events.json")) return runLalEncode([]const GithubEvent, "msgpack.zig known-encode", input, repeats);
     if (std.mem.eql(u8, name, "poet.json")) return runLalEncode([]const Poem, "msgpack.zig known-encode", input, repeats);
     if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runLalEncode(TwitterDocument, "msgpack.zig known-encode", input, repeats);
-    return error.InvalidArguments;
-}
-
-fn runLalTypedRoundtrip(name: []const u8, input: []const u8, repeats: usize) !void {
-    if (std.mem.eql(u8, name, "github_events.json")) return runLalRoundtrip([]const GithubEvent, "msgpack.zig typed roundtrip", input, repeats);
-    if (std.mem.eql(u8, name, "poet.json")) return runLalRoundtrip([]const Poem, "msgpack.zig typed roundtrip", input, repeats);
-    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runLalRoundtrip(TwitterDocument, "msgpack.zig typed roundtrip", input, repeats);
     return error.InvalidArguments;
 }
 

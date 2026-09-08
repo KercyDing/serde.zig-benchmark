@@ -30,7 +30,7 @@ const GenericField = struct {
     value: GenericValue,
 };
 
-/// A JSON-compatible, schema-free tree used by the generic benchmark.
+/// A JSON-compatible, schema-free value tree.
 pub const GenericValue = union(enum) {
     null,
     bool: bool,

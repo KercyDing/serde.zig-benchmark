@@ -4,7 +4,7 @@ Real-world benchmarks of `serde.zig` on JSON and MessagePack files.
 
 Benchmarks are grouped by user-visible task, not library internals: each
 chart only compares libraries that deliver the same result for the same
-workload (typed encode/decode, generic decode/encode). There is no overall
+workload (encode known data, decode known data, load arbitrary data, transform data). There is no overall
 winner ranking.
 
 ## Quick start

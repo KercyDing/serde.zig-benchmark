@@ -83,7 +83,7 @@ pub const GithubEvent = struct {
     id: []const u8,
 };
 
-pub fn isTypedDataset(name: []const u8) bool {
+pub fn isKnownDataset(name: []const u8) bool {
     return std.mem.eql(u8, name, "canada.json") or
         std.mem.eql(u8, name, "github_events.json") or
         std.mem.eql(u8, name, "poet.json") or

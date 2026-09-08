@@ -38,8 +38,8 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(json_bench);
 
     // One executable per MessagePack library: each benchmarks the tasks its
-    // native API supports (typed structs for serde.zig and msgpack.zig,
-    // generic values for zig-msgpack), sharing bench/msgpack/shared.zig.
+    // Each library completes only the tasks its own API supports,
+    // sharing src/msgpack/shared.zig.
     const mod_msgpack_serde_bench = b.createModule(.{
         .root_source_file = b.path("src/msgpack/serde.zig"),
         .target = target,
@@ -98,15 +98,15 @@ pub fn build(b: *std.Build) void {
     run_json.addArg(@tagName(implementation));
     json_step.dependOn(&run_json.step);
 
-    const msgpack_serde_step = b.step("bench-msgpack-serde", "Run serde.zig MessagePack (typed + generic) benchmarks");
+    const msgpack_serde_step = b.step("bench-msgpack-serde", "Run serde.zig MessagePack task benchmarks");
     const run_msgpack_serde = b.addRunArtifact(msgpack_serde_bench);
     msgpack_serde_step.dependOn(&run_msgpack_serde.step);
 
-    const msgpack_lal_step = b.step("bench-msgpack-msgpack-zig", "Run msgpack.zig (lalinsky) MessagePack typed benchmarks");
+    const msgpack_lal_step = b.step("bench-msgpack-msgpack-zig", "Run msgpack.zig (lalinsky) MessagePack task benchmarks");
     const run_msgpack_lal = b.addRunArtifact(msgpack_lal_bench);
     msgpack_lal_step.dependOn(&run_msgpack_lal.step);
 
-    const msgpack_zigmp_step = b.step("bench-msgpack-zig-msgpack", "Run zig-msgpack MessagePack generic benchmarks");
+    const msgpack_zigmp_step = b.step("bench-msgpack-zig-msgpack", "Run zig-msgpack MessagePack task benchmarks");
     const run_msgpack_zigmp = b.addRunArtifact(msgpack_zigmp_bench);
     msgpack_zigmp_step.dependOn(&run_msgpack_zigmp.step);
 

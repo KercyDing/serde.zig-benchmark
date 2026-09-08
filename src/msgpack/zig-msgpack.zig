@@ -10,7 +10,7 @@ const repeatCount = common.repeatCount;
 const nowNanoseconds = common.nowNanoseconds;
 
 // ---------------------------------------------------------------------------
-// zig-msgpack (zigcc) — generic (Payload DOM) corpus.
+// zig-msgpack (zigcc) — arbitrary-data tasks.
 // ---------------------------------------------------------------------------
 
 fn zigDecodePayload(allocator: Allocator, bytes: []const u8) !zig_msgpack.Payload {

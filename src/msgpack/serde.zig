@@ -7,7 +7,7 @@ const input_allocator = common.input_allocator;
 const data_limit = common.data_limit;
 const datasets = common.datasets;
 const repeatCount = common.repeatCount;
-const isKnownDataset = common.isTypedDataset;
+const isKnownDataset = common.isKnownDataset;
 const isTypedDataset = common.isTypedDataset;
 const nowNanoseconds = common.nowNanoseconds;
 const CanadaDocument = common.CanadaDocument;
@@ -83,8 +83,6 @@ pub const GenericValue = union(enum) {
     }
 };
 
-const Mode = enum { generic, typed };
-
 pub fn main(init: std.process.Init.Minimal) !void {
     var args = std.process.Args.Iterator.init(init.args);
     _ = args.skip();
@@ -135,14 +133,14 @@ fn parseObject(allocator: Allocator, deserializer: anytype) @TypeOf(deserializer
 }
 
 fn runKnown(name: []const u8, input: []const u8, repeats: usize) !void {
-    if (std.mem.eql(u8, name, "canada.json")) return runTypedDecode(CanadaDocument, "serde known-decode", input, repeats);
-    if (std.mem.eql(u8, name, "github_events.json")) return runTypedDecode([]const GithubEvent, "serde known-decode", input, repeats);
-    if (std.mem.eql(u8, name, "poet.json")) return runTypedDecode([]const Poem, "serde known-decode", input, repeats);
-    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runTypedDecode(TwitterDocument, "serde known-decode", input, repeats);
+    if (std.mem.eql(u8, name, "canada.json")) return runKnownDecode(CanadaDocument, "serde known-decode", input, repeats);
+    if (std.mem.eql(u8, name, "github_events.json")) return runKnownDecode([]const GithubEvent, "serde known-decode", input, repeats);
+    if (std.mem.eql(u8, name, "poet.json")) return runKnownDecode([]const Poem, "serde known-decode", input, repeats);
+    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runKnownDecode(TwitterDocument, "serde known-decode", input, repeats);
     return error.InvalidArguments;
 }
 
-fn runTypedDecode(comptime T: type, name: []const u8, input: []const u8, repeats: usize) !void {
+fn runKnownDecode(comptime T: type, name: []const u8, input: []const u8, repeats: usize) !void {
     var fixture_arena = std.heap.ArenaAllocator.init(input_allocator);
     defer fixture_arena.deinit();
     const value = try serde.msgpack.fromSlice(T, fixture_arena.allocator(), input);
@@ -180,44 +178,6 @@ fn runKnownEncode(name: []const u8, input: []const u8, repeats: usize) !void {
     if (std.mem.eql(u8, name, "poet.json")) return runEncode([]const Poem, "serde known-encode", input, repeats);
     if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runEncode(TwitterDocument, "serde known-encode", input, repeats);
     return error.InvalidArguments;
-}
-
-fn runTypedRoundtrip(name: []const u8, input: []const u8, repeats: usize) !void {
-    if (std.mem.eql(u8, name, "canada.json")) return runTypedRoundtripWire(CanadaDocument, "serde typed roundtrip", input, repeats);
-    if (std.mem.eql(u8, name, "github_events.json")) return runTypedRoundtripWire([]const GithubEvent, "serde typed roundtrip", input, repeats);
-    if (std.mem.eql(u8, name, "poet.json")) return runTypedRoundtripWire([]const Poem, "serde typed roundtrip", input, repeats);
-    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runTypedRoundtripWire(TwitterDocument, "serde typed roundtrip", input, repeats);
-    return error.InvalidArguments;
-}
-
-fn runTypedRoundtripWire(comptime T: type, name: []const u8, input: []const u8, repeats: usize) !void {
-    var fixture_arena = std.heap.ArenaAllocator.init(input_allocator);
-    defer fixture_arena.deinit();
-    const value = try serde.msgpack.fromSlice(T, fixture_arena.allocator(), input);
-    const wire = try serde.msgpack.toSlice(input_allocator, value);
-    defer input_allocator.free(wire);
-
-    var elapsed: u64 = 0;
-    for (0..repeats) |_| {
-        var arena = std.heap.ArenaAllocator.init(input_allocator);
-        defer arena.deinit();
-        const start = nowNanoseconds();
-        const decoded = try serde.msgpack.fromSlice(T, arena.allocator(), wire);
-        const encoded = try serde.msgpack.toSlice(input_allocator, decoded);
-        const end = nowNanoseconds();
-        std.mem.doNotOptimizeAway(encoded.ptr);
-        input_allocator.free(encoded);
-        elapsed += @max(end - start, 1);
-    }
-
-    const total_bytes: f64 = @floatFromInt(wire.len * repeats);
-    const seconds: f64 = @as(f64, @floatFromInt(elapsed)) / std.time.ns_per_s;
-    std.debug.print("  {s}: {d:.6} ms/op, {d:.2} MiB/s ({d} bytes)\n", .{
-        name,
-        @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(repeats)) / std.time.ns_per_ms,
-        total_bytes / seconds / (1024.0 * 1024.0),
-        wire.len,
-    });
 }
 
 fn runDecode(comptime T: type, name: []const u8, input: []const u8, repeats: usize) !void {
