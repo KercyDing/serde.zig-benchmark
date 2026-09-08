@@ -73,14 +73,13 @@ TYPED_DATASETS = frozenset(
 FORMATS = ("json", "msgpack")
 MODES = ("generic", "typed")
 OPERATIONS = ("roundtrip", "decode", "encode")
-# User-facing tasks. Each task runs in the representation each library
-# naturally supports (typed structs or generic values).
+# User-facing tasks. Each library participates with its native path (typed
+# structs or generic values) and contributes one total per task.
 TASK_SPECS = (
     ("Encode known data", "typed", "encode"),
     ("Decode known data", "typed", "decode"),
     ("Load arbitrary data", "generic", "decode"),
-    ("Transform known data", "typed", "roundtrip"),
-    ("Transform arbitrary data", "generic", "roundtrip"),
+    ("Transform data", "generic", "roundtrip"),
 )
 FORMAT_LABELS = {"json": "JSON", "msgpack": "MessagePack"}
 IMPLEMENTATIONS = ("serde", "std.json")
