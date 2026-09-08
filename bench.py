@@ -4,7 +4,7 @@ The Zig programs already perform warmup and repeat each fixture according to
 its size.  This driver runs every format/representation/implementation
 combination in separate processes, keeps the raw text for auditability,
 aggregates process runs by median, and renders one web page
-(``results/single_thread/index.html``) with Highcharts column charts, then
+(``results/index.html``) with Highcharts column charts, then
 opens it in your browser. No Python chart library is needed; the page loads
 Highcharts from a CDN (first open requires network).
 
@@ -14,7 +14,7 @@ Typical use::
     uv run bench.py --output csv # only summary.csv (or --output md)
 
 Raw per-process output and ``measurements.json`` are kept under the result
-directory (``results/single_thread``); the page and the optional CSV/Markdown
+directory (``results``); the page and the optional CSV/Markdown
 exports are derived from them.
 """
 
@@ -36,7 +36,7 @@ from typing import TypedDict, cast
 from engine import positive_int, run_repetitions
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_OUTPUT = ROOT / "results" / "single_thread"
+DEFAULT_OUTPUT = ROOT / "results"
 
 
 def selected_values(value: str, choices: Sequence[str], name: str) -> tuple[str, ...]:

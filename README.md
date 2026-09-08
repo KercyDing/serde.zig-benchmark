@@ -20,7 +20,7 @@ mise install
 ### `bench.py`
 
 `uv run bench.py` runs every format, writes `index.html`,
-`summary.csv`, and `summary.md` to `results/single_thread/`, then opens the
+`summary.csv`, and `summary.md` to `results/`, then opens the
 page in your browser.
 
 Results are grouped by user task (encode known data, decode known data, load
