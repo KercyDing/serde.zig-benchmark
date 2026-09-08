@@ -39,5 +39,4 @@ Highcharts from a CDN, so the first open needs network.
 | `bench.py` | `--output csv\|md` | Write only selected export(s); repeatable. |
 | `bench-parallel.py` | `--thread N` | Maximum worker threads (default: all logical CPUs). |
 
-Zig versions are managed with `mise`. The default is 0.16.0. Use
-`mise -E zig17 exec -- uv run bench.py` for the dev toolchain.
+The Zig version is pinned in `mise.toml` (0.16.0).
