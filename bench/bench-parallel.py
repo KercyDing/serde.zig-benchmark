@@ -2,9 +2,9 @@
 
 Examples::
 
-    uv run bench-parallel.py
-    uv run bench-parallel.py --format msgpack --thread 8 --runs 5
-    uv run bench-parallel.py --plot-only
+    uv run bench/bench-parallel.py
+    uv run bench/bench-parallel.py --format msgpack --thread 8 --runs 5
+    uv run bench/bench-parallel.py --plot-only
 """
 
 import argparse
@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypedDict, cast
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = ROOT / "results" / "parallel"
 FORMATS = ("json", "msgpack")
 OPERATIONS = ("decode", "encode")

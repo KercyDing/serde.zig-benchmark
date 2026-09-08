@@ -25,7 +25,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const mod_json_bench = b.createModule(.{
-        .root_source_file = b.path("bench/json.zig"),
+        .root_source_file = b.path("src/json.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -41,7 +41,7 @@ pub fn build(b: *std.Build) void {
     // native API supports (typed structs for serde.zig and msgpack.zig,
     // generic values for zig-msgpack), sharing bench/msgpack/shared.zig.
     const mod_msgpack_serde_bench = b.createModule(.{
-        .root_source_file = b.path("bench/msgpack/serde.zig"),
+        .root_source_file = b.path("src/msgpack/serde.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -54,7 +54,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(msgpack_serde_bench);
 
     const mod_msgpack_lal_bench = b.createModule(.{
-        .root_source_file = b.path("bench/msgpack/msgpack-zig.zig"),
+        .root_source_file = b.path("src/msgpack/msgpack-zig.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -68,7 +68,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(msgpack_lal_bench);
 
     const mod_msgpack_zigmp_bench = b.createModule(.{
-        .root_source_file = b.path("bench/msgpack/zig-msgpack.zig"),
+        .root_source_file = b.path("src/msgpack/zig-msgpack.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -81,7 +81,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(msgpack_zigmp_bench);
 
     const mod_parallel_bench = b.createModule(.{
-        .root_source_file = b.path("bench/parallel.zig"),
+        .root_source_file = b.path("src/parallel.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{

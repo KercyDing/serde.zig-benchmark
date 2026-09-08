@@ -1,26 +1,21 @@
 """Run the real-world serde.zig benchmark and open an interactive results page.
 
 The Zig programs already perform warmup and repeat each fixture according to
-its size.  This driver runs each selected target in separate processes, keeps
-the raw text for auditability, aggregates process runs by median, and renders
-one web page (``results/single_thread/index.html``) with Highcharts column charts,
-then opens it in your browser. No Python chart library is needed; the page
-loads Highcharts from a CDN (first open requires network), like the yyjson
-benchmark reports.
+its size.  This driver runs every format/representation/implementation
+combination in separate processes, keeps the raw text for auditability,
+aggregates process runs by median, and renders one web page
+(``results/single_thread/index.html``) with Highcharts column charts, then
+opens it in your browser. No Python chart library is needed; the page loads
+Highcharts from a CDN (first open requires network).
 
 Typical use::
 
-    uv run bench.py                      # index.html + csv + md, opens the page
-    uv run bench.py --no-plot            # summary.csv + summary.md, no page
-    uv run bench.py --output csv         # only summary.csv
-    uv run bench.py --runs 20 --mode generic
-    python3 bench.py --plot-only         # rebuild outputs from saved results
+    uv run bench/bench.py              # run all, write html + csv + md, open page
+    uv run bench/bench.py --output csv # only summary.csv (or --output md)
 
-Raw per-process output and ``measurements.json`` are always kept under the
-result directory (``results/single_thread`` by default) for auditability; the page and
-the optional CSV/Markdown exports are derived from them. Decode throughput
-uses input bytes; encode throughput uses encoded output bytes, matching the
-benchmark implementation.
+Raw per-process output and ``measurements.json`` are kept under the result
+directory (``results/single_thread``); the page and the optional CSV/Markdown
+exports are derived from them.
 """
 
 import argparse
@@ -39,7 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypedDict, cast
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = ROOT / "results" / "single_thread"
 
 
@@ -303,9 +298,9 @@ def run_process(command: Sequence[str]) -> str:
 
 def run_benchmarks(
     formats: Sequence[str],
-    modes: Sequence[str],
     runs: int,
-    command_options: argparse.Namespace,
+    zig: str,
+    optimize: str,
     output_dir: Path,
 ) -> tuple[list[Measurement], dict[tuple[str, str, str], list[str]]]:
     all_measurements: list[Measurement] = []
@@ -315,14 +310,8 @@ def run_benchmarks(
         for implementation in implementations_for_format(format_name):
             raw_dir = output_dir / format_name / implementation_directory(implementation)
             raw_dir.mkdir(parents=True, exist_ok=True)
-            for mode in sorted(set(modes) & set(supported_modes(format_name, implementation))):
-                command = build_command(
-                    format_name,
-                    implementation,
-                    mode,
-                    command_options.zig,
-                    command_options.optimize,
-                )
+            for mode in supported_modes(format_name, implementation):
+                command = build_command(format_name, implementation, mode, zig, optimize)
                 commands[(format_name, implementation, mode)] = command
                 for run in range(1, runs + 1):
                     print(f"[{format_name}/{implementation}/{mode}] run {run}/{runs}: {' '.join(command)}", flush=True)
@@ -633,16 +622,10 @@ def parser() -> argparse.ArgumentParser:
         help="benchmark one format or both (default: all)",
     )
     result.add_argument(
-        "--mode",
-        choices=("generic", "typed", "all"),
-        default="all",
-        help="benchmark one representation or both (default: all)",
-    )
-    result.add_argument(
         "--runs",
         type=positive_int,
         default=10,
-        help="independent process runs per format/mode (default: 10)",
+        help="independent process runs per format (default: 10)",
     )
     result.add_argument(
         "--output",
@@ -652,80 +635,44 @@ def parser() -> argparse.ArgumentParser:
         default=None,
         help="write only the chosen summary file(s), without the page (repeatable)",
     )
-    result.add_argument(
-        "--no-plot",
-        action="store_true",
-        help="write summary.csv and summary.md without the page",
-    )
-    result.add_argument(
-        "--output-dir",
-        type=Path,
-        default=DEFAULT_OUTPUT,
-        help=f"directory for index.html, measurements.json, and per-format logs (default: {DEFAULT_OUTPUT})",
-    )
-    result.add_argument("--zig", default=os.environ.get("ZIG", "zig"), help="Zig executable (default: $ZIG or zig)")
-    result.add_argument(
-        "--optimize",
-        default="ReleaseFast",
-        help="optimization mode forwarded as -Doptimize (default: ReleaseFast; build.zig otherwise defaults to Debug)",
-    )
-    result.add_argument(
-        "--plot-only",
-        action="store_true",
-        help="rebuild the page or exports from the saved measurements.json without running Zig",
-    )
     return result
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parser().parse_args(argv)
-    output_dir = args.output_dir.resolve()
+    output_dir = DEFAULT_OUTPUT.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     formats = selected_values(args.format_name, FORMATS, "format")
-    modes = selected_values(args.mode, MODES, "mode")
+    zig = os.environ.get("ZIG", "zig")
+    optimize = "ReleaseFast"
 
-    if args.plot_only:
-        summary_path = output_dir / "measurements.json"
-        if not summary_path.is_file():
-            raise SystemExit(f"--plot-only requires {summary_path}")
-        summary, runs = load_summary(summary_path)
-    else:
-        measurements, commands = run_benchmarks(formats, modes, args.runs, args, output_dir)
-        summary = aggregate(measurements)
-        metadata = {
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "project_root": str(ROOT),
-            "serde": serde_version(),
-            "python": platform.python_version(),
-            "platform": platform.platform(),
-            "runs": args.runs,
-            "commands": {f"{format_name}/{implementation}/{mode}": command for (format_name, implementation, mode), command in commands.items()},
-        }
-        payload = {
-            "metadata": metadata,
-            "measurements": [
-                asdict(measurement) | {"measured_bytes": measurement.measured_bytes}
-                for measurement in measurements
-            ],
-            "summary": summary,
-        }
-        (output_dir / "measurements.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-        runs = args.runs
-
-    # Filtering here also makes --plot-only useful with --format/--mode.
-    summary = [
-        row
-        for row in summary
-        if str(row["format"]) in formats and str(row["mode"]) in modes
-    ]
+    measurements, commands = run_benchmarks(formats, args.runs, zig, optimize, output_dir)
+    summary = aggregate(measurements)
+    metadata = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "project_root": str(ROOT),
+        "serde": serde_version(),
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "runs": args.runs,
+        "commands": {f"{format_name}/{implementation}/{mode}": command for (format_name, implementation, mode), command in commands.items()},
+    }
+    payload = {
+        "metadata": metadata,
+        "measurements": [
+            asdict(measurement) | {"measured_bytes": measurement.measured_bytes}
+            for measurement in measurements
+        ],
+        "summary": summary,
+    }
+    (output_dir / "measurements.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    runs = args.runs
 
     written: list[Path] = []
     if args.exports:
         want_csv = "csv" in args.exports
         want_md = "md" in args.exports
         want_page = False
-    elif args.no_plot:
-        want_csv, want_md, want_page = True, True, False
     else:
         want_csv, want_md, want_page = True, True, True
 
@@ -740,7 +687,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     page: Path | None = None
     if want_page:
         page = output_dir / "index.html"
-        assert page is not None
         write_html_page(page, summary, runs)
         written.append(page)
 
