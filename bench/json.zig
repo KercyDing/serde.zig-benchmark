@@ -249,9 +249,9 @@ fn runDecode(comptime T: type, name: []const u8, input: []const u8, repeats: usi
 
     const total_bytes: f64 = @floatFromInt(input.len * repeats);
     const seconds: f64 = @as(f64, @floatFromInt(elapsed)) / std.time.ns_per_s;
-    std.debug.print("  {s}: {d:.3} ms/op, {d:.2} MiB/s\n", .{
+    std.debug.print("  {s}: {d:.6} ms/op, {d:.2} MiB/s\n", .{
         name,
-        @as(f64, @floatFromInt(elapsed / repeats)) / std.time.ns_per_ms,
+        @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(repeats)) / std.time.ns_per_ms,
         total_bytes / seconds / (1024.0 * 1024.0),
     });
 }
@@ -265,9 +265,9 @@ fn isTypedDataset(name: []const u8) bool {
 }
 
 fn repeatCount(size: usize) usize {
-    if (size >= 32 * 1024 * 1024) return 1;
-    if (size >= 4 * 1024 * 1024) return 2;
-    return 32;
+    const target_bytes = 64 * 1024 * 1024;
+    if (size == 0 or size >= target_bytes) return 1;
+    return (target_bytes + size - 1) / size;
 }
 
 inline fn nowNanoseconds() u64 {
