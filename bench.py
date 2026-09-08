@@ -33,18 +33,76 @@ import os
 import platform
 import re
 import statistics
+import subprocess
 import sys
 import webbrowser
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypedDict, cast
-
-from engine import positive_int, run_repetitions
+from typing import TypedDict, TypeVar, cast
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_OUTPUT = ROOT / "results"
+
+T = TypeVar("T")
+
+
+def positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
+
+
+def run_process(command: Sequence[str]) -> str:
+    try:
+        result = subprocess.run(
+            list(command),
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise RuntimeError(f"could not start {' '.join(command)}: {exc}") from exc
+
+    output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    if result.returncode != 0:
+        tail = "\n".join(output.splitlines()[-40:])
+        raise RuntimeError(
+            f"benchmark command failed with exit code {result.returncode}:\n"
+            f"  {' '.join(command)}\n{tail}"
+        )
+    return output
+
+
+def run_repetitions(
+    *,
+    label: str,
+    command: Sequence[str],
+    raw_dir: Path,
+    stem: str,
+    runs: int,
+    parse: Callable[[str, int], list[T]],
+    validate: Callable[[list[T]], None],
+) -> list[T]:
+    """Run one command ``runs`` times, write each raw log, and collect samples."""
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    collected: list[T] = []
+    for run in range(1, runs + 1):
+        print(f"[{label}] run {run}/{runs}: {' '.join(command)}", flush=True)
+        output = run_process(command)
+        raw_path = raw_dir / f"{stem}-{run:02d}.txt"
+        raw_path.write_text(output, encoding="utf-8")
+        parsed = parse(output, run)
+        validate(parsed)
+        collected.extend(parsed)
+        print(f"  parsed {len(parsed)} measurements -> {raw_path}", flush=True)
+    return collected
 
 
 def selected_values(value: str, choices: Sequence[str], name: str) -> tuple[str, ...]:
