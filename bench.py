@@ -50,12 +50,10 @@ DEFAULT_OUTPUT = ROOT / "results" / "single_thread"
 
 
 def serde_version() -> str:
-    """Read the pinned serde.zig tag from the build.zig.zon dependency URL."""
+    """Read the pinned serde.zig version from its package hash."""
     root_zon = (ROOT / "build.zig.zon").read_text(encoding="utf-8")
-    if match := re.search(r"tags/(v[0-9]+(?:\.[0-9]+)*)", root_zon):
-        return match.group(1)
-    if match := re.search(r"ref=([A-Za-z0-9_.-]+)", root_zon):
-        return match.group(1)
+    if match := re.search(r'\.serde\s*=\s*\.\{.*?\.hash\s*=\s*"serde-([0-9]+(?:\.[0-9]+)*)-', root_zon, re.DOTALL):
+        return f"v{match.group(1)}"
     return "unknown"
 
 DATASETS = (
