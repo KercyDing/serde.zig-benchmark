@@ -30,9 +30,10 @@ uv run bench.py
 
 ### `bench-parallel.py`
 
-The parallel runner measures typed JSON and MessagePack scaling with
-independent worker arenas. JSON compares serde.zig with `std.json`; MessagePack
-has only the serde.zig series.
+The parallel runner measures JSON and MessagePack scaling with independent
+worker arenas. Use `--mode generic`, `typed`, or `all`; `all` runs both
+representations and keeps them separate in the exports and charts. JSON
+compares serde.zig with `std.json`; MessagePack has only the serde.zig series.
 
 ```sh
 uv run bench-parallel.py
@@ -48,6 +49,7 @@ is not a power of two.
 
 | Script | Option | Description |
 | --- | --- | --- |
+| Both | `--mode generic\|typed\|all` | Select representation(s) (`all` runs both; default: `all` in bench.py, `typed` in bench-parallel.py). |
 | Both | `--format json\|msgpack\|all` | Select input format(s). |
 | Both | `--runs N` | Independent process runs (default: 10). |
 | Both | `--output csv\|md` | Write only selected export(s); repeatable. |
@@ -55,11 +57,7 @@ is not a power of two.
 | Both | `--output-dir PATH` | Override the result directory. |
 | Both | `--zig PATH` | Zig executable to invoke. |
 | Both | `--optimize MODE` | Zig optimization mode (default: `ReleaseFast`). |
-| Both | `--no-build` | Run an existing binary from `--binary-dir`. |
-| Both | `--binary-dir PATH` | Location of prebuilt benchmark binaries. |
 | Both | `--plot-only` | Rebuild selected reports from `measurements.json`. |
-| `bench.py` | `--mode generic\|typed\|all` | Select representation(s). |
-| `bench-parallel.py` | `--mode typed` | Parallel benchmarks use typed corpora only. |
 | `bench-parallel.py` | `--thread N` | Maximum worker threads (default: all logical CPUs). |
 
 Zig versions are managed with `mise`. The default is 0.16.0. Use

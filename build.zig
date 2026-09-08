@@ -83,5 +83,6 @@ pub fn build(b: *std.Build) void {
     run_parallel.addArg(b.fmt("{d}", .{max_threads}));
     run_parallel.addArg(@tagName(format));
     run_parallel.addArg(@tagName(implementation));
+    run_parallel.addArg(@tagName(mode));
     parallel_step.dependOn(&run_parallel.step);
 }

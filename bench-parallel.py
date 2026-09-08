@@ -20,13 +20,14 @@ from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypedDict
+from typing import TypedDict, cast
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_OUTPUT = ROOT / "results" / "parallel"
 FORMATS = ("json", "msgpack")
 OPERATIONS = ("decode", "encode")
-DATASETS = ("canada.json", "github_events.json", "poet.json", "twitter.json", "twitterescaped.json")
+DATASETS = ("canada.json", "citm_catalog.json", "fgo.json", "github_events.json", "gsoc-2018.json", "lottie.json", "otfcc.json", "poet.json", "twitter.json", "twitterescaped.json")
+TYPED_DATASETS = frozenset({"canada.json", "github_events.json", "poet.json", "twitter.json", "twitterescaped.json"})
 FORMAT_LABELS = {"json": "JSON", "msgpack": "MessagePack"}
 IMPLEMENTATIONS = ("serde", "std.json")
 
@@ -54,6 +55,7 @@ RATE_RE = re.compile(
 class Measurement:
     format: str
     implementation: str
+    mode: str
     dataset: str
     operation: str
     threads: int
@@ -64,6 +66,7 @@ class Measurement:
 class SummaryRow(TypedDict):
     format: str
     implementation: str
+    mode: str
     dataset: str
     operation: str
     threads: int
@@ -94,10 +97,7 @@ def selected_formats(format_name: str) -> tuple[str, ...]:
     return FORMATS if format_name == "all" else (format_name,)
 
 
-def build_command(args: argparse.Namespace, format_name: str, implementation: str) -> list[str]:
-    if args.no_build:
-        return [str(args.binary_dir / "parallel-bench"), str(args.thread), format_name, implementation_argument(implementation)]
-
+def build_command(args: argparse.Namespace, format_name: str, implementation: str, mode: str) -> list[str]:
     command = [
         args.zig,
         "build",
@@ -105,6 +105,7 @@ def build_command(args: argparse.Namespace, format_name: str, implementation: st
         f"-Dmax-threads={args.thread}",
         f"-Dformat={format_name}",
         f"-Dimplementation={implementation_argument(implementation)}",
+        f"-Dmode={mode}",
     ]
     if args.optimize:
         command.append(f"-Doptimize={args.optimize}")
@@ -130,7 +131,7 @@ def run_process(command: Sequence[str]) -> str:
     return output
 
 
-def parse_output(output: str, run: int) -> list[Measurement]:
+def parse_output(output: str, run: int, mode: str) -> list[Measurement]:
     current_format: str | None = None
     current_implementation: str | None = None
     current_dataset: str | None = None
@@ -148,20 +149,24 @@ def parse_output(output: str, run: int) -> list[Measurement]:
         threads = int(rate_match.group("threads"))
         measurements.extend(
             (
-                Measurement(current_format, current_implementation, current_dataset, "decode", threads, float(rate_match.group("decode")), run),
-                Measurement(current_format, current_implementation, current_dataset, "encode", threads, float(rate_match.group("encode")), run),
+                Measurement(current_format, current_implementation, mode, current_dataset, "decode", threads, float(rate_match.group("decode")), run),
+                Measurement(current_format, current_implementation, mode, current_dataset, "encode", threads, float(rate_match.group("encode")), run),
             )
         )
     return measurements
 
 
-def validate_measurements(measurements: Sequence[Measurement], format_name: str, implementation: str, max_threads: int) -> None:
-    actual = {(item.format, item.implementation, item.dataset, item.operation, item.threads) for item in measurements}
+def datasets_for_mode(mode: str) -> tuple[str, ...]:
+    return tuple(dataset for dataset in DATASETS if mode == "generic" or dataset in TYPED_DATASETS)
+
+
+def validate_measurements(measurements: Sequence[Measurement], format_name: str, implementation: str, mode: str, max_threads: int) -> None:
+    actual = {(item.format, item.implementation, item.mode, item.dataset, item.operation, item.threads) for item in measurements}
     if len(actual) != len(measurements):
         raise RuntimeError("duplicate metric lines in benchmark output")
     expected = {
-        (format_name, implementation, dataset, operation, threads)
-        for dataset in DATASETS
+        (format_name, implementation, mode, dataset, operation, threads)
+        for dataset in datasets_for_mode(mode)
         for operation in OPERATIONS
         for threads in thread_counts(max_threads)
     }
@@ -170,21 +175,22 @@ def validate_measurements(measurements: Sequence[Measurement], format_name: str,
         unexpected = sorted(actual - expected)
         details = []
         if missing:
-            details.append("missing " + ", ".join(f"{key[0]}/{key[1]}/{key[2]}/{key[3]}/{key[4]}" for key in missing))
+            details.append("missing " + ", ".join("/".join(map(str, key)) for key in missing))
         if unexpected:
-            details.append("unexpected " + ", ".join(f"{key[0]}/{key[1]}/{key[2]}/{key[3]}/{key[4]}" for key in unexpected))
+            details.append("unexpected " + ", ".join("/".join(map(str, key)) for key in unexpected))
         raise RuntimeError("parallel benchmark output: " + "; ".join(details))
 
 
 def aggregate(measurements: Iterable[Measurement]) -> list[SummaryRow]:
-    groups: dict[tuple[str, str, str, str, int], list[float]] = {}
+    groups: dict[tuple[str, str, str, str, str, int], list[float]] = {}
     for measurement in measurements:
-        key = (measurement.format, measurement.implementation, measurement.dataset, measurement.operation, measurement.threads)
+        key = (measurement.format, measurement.implementation, measurement.mode, measurement.dataset, measurement.operation, measurement.threads)
         groups.setdefault(key, []).append(measurement.throughput_gb_s)
     return [
         {
             "format": format_name,
             "implementation": implementation,
+            "mode": mode,
             "dataset": dataset,
             "operation": operation,
             "threads": threads,
@@ -193,7 +199,7 @@ def aggregate(measurements: Iterable[Measurement]) -> list[SummaryRow]:
             "min_gb_s": min(samples),
             "max_gb_s": max(samples),
         }
-        for (format_name, implementation, dataset, operation, threads), samples in sorted(groups.items())
+        for (format_name, implementation, mode, dataset, operation, threads), samples in sorted(groups.items())
     ]
 
 
@@ -201,6 +207,7 @@ def write_csv(path: Path, rows: Sequence[SummaryRow]) -> None:
     fields = [
         "format",
         "implementation",
+        "mode",
         "dataset",
         "operation",
         "threads",
@@ -215,39 +222,41 @@ def write_csv(path: Path, rows: Sequence[SummaryRow]) -> None:
         writer.writerows(rows)
 
 
-def write_markdown(path: Path, rows: Sequence[SummaryRow], formats: Sequence[str], max_threads: int) -> None:
+def write_markdown(path: Path, rows: Sequence[SummaryRow], formats: Sequence[str], modes: Sequence[str], max_threads: int) -> None:
     by_key = {
-        (str(row["format"]), str(row["implementation"]), str(row["dataset"]), str(row["operation"]), int(row["threads"])): row
+        (str(row["format"]), str(row["implementation"]), str(row["mode"]), str(row["dataset"]), str(row["operation"]), int(row["threads"])): row
         for row in rows
     }
     lines = ["# serde.zig parallel benchmark results", ""]
     for format_name in formats:
         for implementation in implementations_for_format(format_name):
-            for operation in OPERATIONS:
-                lines.extend(
-                    [
-                        f"## {FORMAT_LABELS[format_name]} / {implementation} / {operation}",
-                        "",
-                        "| Threads | " + " | ".join(dataset.removesuffix(".json") for dataset in DATASETS) + " |",
-                        "| ---: | " + " | ".join("---:" for _ in DATASETS) + " |",
-                    ]
-                )
-                for threads in thread_counts(max_threads):
-                    values = []
-                    for dataset in DATASETS:
-                        row = by_key[(format_name, implementation, dataset, operation, threads)]
-                        values.append(f"{float(row['throughput_gb_s']):.3f} GB/s")
-                    lines.append(f"| {threads} | " + " | ".join(values) + " |")
-                lines.append("")
+            for mode in modes:
+                datasets = datasets_for_mode(mode)
+                for operation in OPERATIONS:
+                    lines.extend(
+                        [
+                            f"## {FORMAT_LABELS[format_name]} / {implementation} / {mode} / {operation}",
+                            "",
+                            "| Threads | " + " | ".join(dataset.removesuffix(".json") for dataset in datasets) + " |",
+                            "| ---: | " + " | ".join("---:" for _ in datasets) + " |",
+                        ]
+                    )
+                    for threads in thread_counts(max_threads):
+                        values = []
+                        for dataset in datasets:
+                            row = by_key[(format_name, implementation, mode, dataset, operation, threads)]
+                            values.append(f"{float(row['throughput_gb_s']):.3f} GB/s")
+                        lines.append(f"| {threads} | " + " | ".join(values) + " |")
+                    lines.append("")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 HIGHCHARTS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/highcharts/8.2.0/"
 
 
-def write_html_page(path: Path, rows: Sequence[SummaryRow], formats: Sequence[str], runs: int, max_threads: int) -> None:
+def write_html_page(path: Path, rows: Sequence[SummaryRow], formats: Sequence[str], modes: Sequence[str], runs: int, max_threads: int) -> None:
     by_key = {
-        (str(row["format"]), str(row["implementation"]), str(row["dataset"]), str(row["operation"]), int(row["threads"])): row
+        (str(row["format"]), str(row["implementation"]), str(row["mode"]), str(row["dataset"]), str(row["operation"]), int(row["threads"])): row
         for row in rows
     }
     counts = thread_counts(max_threads)
@@ -271,32 +280,34 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], formats: Sequence[st
         }
         return f'<section class="plot"><h2>{title}</h2><div id="{container_id}"></div></section>\n<script>Highcharts.chart({json.dumps(container_id)}, {json.dumps(options)});</script>'
 
-    def values(format_name: str, implementation: str, dataset: str, operation: str) -> list[float]:
-        return [float(by_key[(format_name, implementation, dataset, operation, threads)]["throughput_gb_s"]) for threads in counts]
+    def values(format_name: str, implementation: str, mode: str, dataset: str, operation: str) -> list[float]:
+        return [float(by_key[(format_name, implementation, mode, dataset, operation, threads)]["throughput_gb_s"]) for threads in counts]
 
     overview = []
     for format_name in formats:
         for implementation in implementations_for_format(format_name):
-            for operation in OPERATIONS:
-                overview.append(
-                    {
-                        "name": f"{FORMAT_LABELS[format_name]} / {implementation} / {operation}",
-                        "data": [statistics.geometric_mean(values(format_name, implementation, dataset, operation)[index] for dataset in DATASETS) for index in range(len(counts))],
-                    }
-                )
+            for mode in modes:
+                for operation in OPERATIONS:
+                    overview.append(
+                        {
+                            "name": f"{FORMAT_LABELS[format_name]} / {implementation} / {mode} / {operation}",
+                            "data": [statistics.geometric_mean(values(format_name, implementation, mode, dataset, operation)[index] for dataset in datasets_for_mode(mode)) for index in range(len(counts))],
+                        }
+                    )
 
     sections = [chart("Parallel throughput overview", overview, "parallel-overview")]
     for format_name in formats:
-        for operation in OPERATIONS:
-            series = [
-                {
-                    "name": f"{implementation} / {dataset.removesuffix('.json')}",
-                    "data": values(format_name, implementation, dataset, operation),
-                }
-                for implementation in implementations_for_format(format_name)
-                for dataset in DATASETS
-            ]
-            sections.append(chart(f"{FORMAT_LABELS[format_name]} — {operation}", series, f"parallel-{format_name}-{operation}"))
+        for mode in modes:
+            for operation in OPERATIONS:
+                series = [
+                    {
+                        "name": f"{implementation} / {dataset.removesuffix('.json')}",
+                        "data": values(format_name, implementation, mode, dataset, operation),
+                    }
+                    for implementation in implementations_for_format(format_name)
+                    for dataset in datasets_for_mode(mode)
+                ]
+                sections.append(chart(f"{FORMAT_LABELS[format_name]} / {mode} — {operation}", series, f"parallel-{format_name}-{mode}-{operation}"))
 
     html = f"""<!doctype html>
 <html lang="en">
@@ -316,7 +327,7 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], formats: Sequence[st
 </style>
 </head>
 <body>
-<header><h1>serde.zig parallel scaling benchmark</h1><p>Median of {runs} process run(s) · typed JSON compares serde.zig and std.json · total throughput across workers.</p></header>
+<header><h1>serde.zig parallel scaling benchmark</h1><p>Median of {runs} process run(s) · JSON compares serde.zig and std.json · total throughput across workers.</p></header>
 {''.join(sections)}
 </body>
 </html>
@@ -327,7 +338,7 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], formats: Sequence[st
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--format", dest="format_name", choices=("json", "msgpack", "all"), default="all", help="benchmark one format or both (default: all)")
-    result.add_argument("--mode", choices=("typed",), default="typed", help="parallel benchmarks use the typed corpus (default: typed)")
+    result.add_argument("--mode", choices=("generic", "typed", "all"), default="typed", help="representation(s) to benchmark (default: typed)")
     result.add_argument("--thread", type=positive_int, default=os.cpu_count() or 1, help="maximum worker threads (default: all logical CPUs)")
     result.add_argument("--runs", type=positive_int, default=10, help="independent process runs (default: 10)")
     result.add_argument("--output", dest="exports", action="append", choices=("csv", "md"), default=None, help="write only the chosen summary file(s), without the page (repeatable)")
@@ -335,8 +346,6 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT, help=f"directory for index.html, measurements.json, and raw logs (default: {DEFAULT_OUTPUT})")
     result.add_argument("--zig", default=os.environ.get("ZIG", "zig"), help="Zig executable (default: $ZIG or zig)")
     result.add_argument("--optimize", default="ReleaseFast", help="optimization mode forwarded as -Doptimize (default: ReleaseFast)")
-    result.add_argument("--no-build", action="store_true", help="run zig-out/bin/parallel-bench instead of invoking zig build")
-    result.add_argument("--binary-dir", type=Path, default=ROOT / "zig-out" / "bin", help="directory containing parallel-bench for --no-build")
     result.add_argument("--plot-only", action="store_true", help="rebuild index.html from saved measurements.json")
     return result
 
@@ -351,33 +360,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not summary_path.is_file():
             raise SystemExit(f"--plot-only requires {summary_path}")
         payload = json.loads(summary_path.read_text(encoding="utf-8"))
-        summary = payload["summary"]
+        summary = cast(list[SummaryRow], [{**row, "mode": row.get("mode", "typed")} for row in payload["summary"]])
         runs = int(payload["metadata"]["runs"])
         max_threads = int(payload["metadata"]["max_threads"])
         saved_formats = tuple(payload["metadata"]["formats"])
         formats = tuple(format_name for format_name in saved_formats if format_name in selected_formats(args.format_name))
+        saved_modes = tuple(payload["metadata"].get("modes", ("typed",)))
+        modes = tuple(mode for mode in saved_modes if args.mode == "all" or mode == args.mode)
         if not formats:
             raise SystemExit(f"--format {args.format_name} has no saved parallel measurements")
-        summary = [row for row in summary if str(row["format"]) in formats]
+        summary = [row for row in summary if str(row["format"]) in formats and str(row["mode"]) in modes]
     else:
         measurements: list[Measurement] = []
         formats = selected_formats(args.format_name)
+        modes = ("generic", "typed") if args.mode == "all" else (args.mode,)
         commands: dict[str, list[str]] = {}
         for format_name in formats:
             for implementation in implementations_for_format(format_name):
-                command = build_command(args, format_name, implementation)
-                commands[f"{format_name}/{implementation}"] = command
-                raw_dir = output_dir / format_name / implementation_directory(implementation)
-                raw_dir.mkdir(parents=True, exist_ok=True)
-                for run in range(1, args.runs + 1):
-                    print(f"[{format_name}/{implementation}] run {run}/{args.runs}: {' '.join(command)}", flush=True)
-                    output = run_process(command)
-                    raw_path = raw_dir / f"parallel-{run:02d}.txt"
-                    raw_path.write_text(output, encoding="utf-8")
-                    parsed = parse_output(output, run)
-                    validate_measurements(parsed, format_name, implementation, args.thread)
-                    measurements.extend(parsed)
-                    print(f"  parsed {len(parsed)} measurements -> {raw_path}", flush=True)
+                for mode in modes:
+                    command = build_command(args, format_name, implementation, mode)
+                    commands[f"{format_name}/{implementation}/{mode}"] = command
+                    raw_dir = output_dir / format_name / implementation_directory(implementation)
+                    raw_dir.mkdir(parents=True, exist_ok=True)
+                    for run in range(1, args.runs + 1):
+                        print(f"[{format_name}/{implementation}/{mode}] run {run}/{args.runs}: {' '.join(command)}", flush=True)
+                        output = run_process(command)
+                        raw_path = raw_dir / f"{mode}-parallel-{run:02d}.txt"
+                        raw_path.write_text(output, encoding="utf-8")
+                        parsed = parse_output(output, run, mode)
+                        validate_measurements(parsed, format_name, implementation, mode, args.thread)
+                        measurements.extend(parsed)
+                        print(f"  parsed {len(parsed)} measurements -> {raw_path}", flush=True)
         summary = aggregate(measurements)
         runs = args.runs
         max_threads = args.thread
@@ -387,6 +400,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "runs": runs,
                 "max_threads": max_threads,
                 "formats": formats,
+                "modes": modes,
                 "commands": commands,
             },
             "measurements": [asdict(measurement) for measurement in measurements],
@@ -410,13 +424,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         written.append(csv_path)
     if want_md:
         markdown_path = output_dir / "summary.md"
-        write_markdown(markdown_path, summary, formats, max_threads)
+        write_markdown(markdown_path, summary, formats, modes, max_threads)
         written.append(markdown_path)
     page: Path | None = None
     if want_page:
         page = output_dir / "index.html"
         assert page is not None
-        write_html_page(page, summary, formats, runs, max_threads)
+        write_html_page(page, summary, formats, modes, runs, max_threads)
         written.append(page)
 
     for path in written:

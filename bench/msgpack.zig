@@ -27,7 +27,7 @@ const GenericField = struct {
 
 /// A JSON-compatible MessagePack tree. It is intentionally local to the
 /// MessagePack executable so its decoder cannot invoke JSON code.
-const GenericValue = union(enum) {
+pub const GenericValue = union(enum) {
     null,
     bool: bool,
     int: i64,

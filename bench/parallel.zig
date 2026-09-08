@@ -1,5 +1,7 @@
 const std = @import("std");
 const serde = @import("serde");
+const json_bench = @import("json.zig");
+const msgpack_bench = @import("msgpack.zig");
 
 const Allocator = std.mem.Allocator;
 const input_allocator = std.heap.c_allocator;
@@ -10,6 +12,20 @@ const Format = enum { json, msgpack };
 const SelectedFormat = enum { json, msgpack, all };
 const Backend = enum { serde, std_json };
 const SelectedImplementation = enum { serde, std, all };
+const Mode = enum { generic, typed };
+
+const datasets = [_][]const u8{
+    "canada.json",
+    "citm_catalog.json",
+    "fgo.json",
+    "github_events.json",
+    "gsoc-2018.json",
+    "lottie.json",
+    "otfcc.json",
+    "poet.json",
+    "twitter.json",
+    "twitterescaped.json",
+};
 
 const TwitterUser = struct {
     id: u64,
@@ -90,30 +106,45 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const max_threads = std.fmt.parseInt(usize, args.next() orelse return error.InvalidArguments, 10) catch return error.InvalidArguments;
     const selected_format = std.meta.stringToEnum(SelectedFormat, args.next() orelse return error.InvalidArguments) orelse return error.InvalidArguments;
     const selected_implementation = std.meta.stringToEnum(SelectedImplementation, args.next() orelse return error.InvalidArguments) orelse return error.InvalidArguments;
+    const mode = std.meta.stringToEnum(Mode, args.next() orelse return error.InvalidArguments) orelse return error.InvalidArguments;
     if (max_threads == 0 or args.next() != null) return error.InvalidArguments;
 
     std.debug.print("Parallel benchmark ({s})\n", .{@tagName(@import("builtin").mode)});
     std.debug.print("Each worker processes about {d} MiB per operation. File loading, fixture setup, warmup, and cleanup are excluded.\n", .{target_bytes_per_worker / (1024 * 1024)});
 
     if (selected_format == .json or selected_format == .all) {
-        try runFiles(.json, selected_implementation, max_threads);
+        try runFiles(.json, selected_implementation, mode, max_threads);
     }
     if (selected_format == .msgpack or selected_format == .all) {
-        if (selected_implementation != .std) try runFiles(.msgpack, selected_implementation, max_threads);
+        if (selected_implementation != .std) try runFiles(.msgpack, selected_implementation, mode, max_threads);
     }
 }
 
-fn runFiles(comptime format: Format, selected_implementation: SelectedImplementation, max_threads: usize) !void {
-    if (selected_implementation != .std) try runBackendFiles(format, .serde, max_threads);
-    if (format == .json and selected_implementation != .serde) try runBackendFiles(format, .std_json, max_threads);
+fn runFiles(comptime format: Format, selected_implementation: SelectedImplementation, mode: Mode, max_threads: usize) !void {
+    if (selected_implementation != .std) try runBackendFiles(format, .serde, mode, max_threads);
+    if (format == .json and selected_implementation != .serde) try runBackendFiles(format, .std_json, mode, max_threads);
 }
 
-fn runBackendFiles(comptime format: Format, comptime backend: Backend, max_threads: usize) !void {
+fn runBackendFiles(comptime format: Format, comptime backend: Backend, mode: Mode, max_threads: usize) !void {
+    if (mode == .generic) {
+        for (datasets) |name| try runGeneric(format, backend, name, max_threads);
+        return;
+    }
     try runFormat(format, backend, CanadaDocument, "canada.json", max_threads);
     try runFormat(format, backend, []const GithubEvent, "github_events.json", max_threads);
     try runFormat(format, backend, []const Poem, "poet.json", max_threads);
     try runFormat(format, backend, TwitterDocument, "twitter.json", max_threads);
     try runFormat(format, backend, TwitterDocument, "twitterescaped.json", max_threads);
+}
+
+fn runGeneric(comptime format: Format, comptime backend: Backend, name: []const u8, max_threads: usize) !void {
+    switch (backend) {
+        .serde => switch (format) {
+            .json => try runFormat(format, backend, json_bench.GenericValue, name, max_threads),
+            .msgpack => try runFormat(format, backend, msgpack_bench.GenericValue, name, max_threads),
+        },
+        .std_json => try runFormat(format, backend, std.json.Value, name, max_threads),
+    }
 }
 
 fn runFormat(comptime format: Format, comptime backend: Backend, comptime T: type, name: []const u8, max_threads: usize) !void {

@@ -165,17 +165,7 @@ def build_command(
     mode: str,
     zig: str,
     optimize: str | None,
-    *,
-    no_build: bool,
-    binary_dir: Path,
 ) -> list[str]:
-    if no_build:
-        binary = binary_dir / f"{format_name}-bench"
-        arguments = [str(binary), mode]
-        if format_name == "json":
-            arguments.append(implementation_argument(implementation))
-        return arguments
-
     command = [zig, "build", f"bench-{format_name}", f"-Dmode={mode}"]
     if format_name == "json":
         command.append(f"-Dimplementation={implementation_argument(implementation)}")
@@ -295,8 +285,6 @@ def run_benchmarks(
                     mode,
                     command_options.zig,
                     command_options.optimize,
-                    no_build=command_options.no_build,
-                    binary_dir=command_options.binary_dir,
                 )
                 commands[(format_name, implementation, mode)] = command
                 for run in range(1, runs + 1):
@@ -739,17 +727,6 @@ def parser() -> argparse.ArgumentParser:
         "--optimize",
         default="ReleaseFast",
         help="optimization mode forwarded as -Doptimize (default: ReleaseFast; build.zig otherwise defaults to Debug)",
-    )
-    result.add_argument(
-        "--no-build",
-        action="store_true",
-        help="run existing zig-out binaries instead of invoking zig build",
-    )
-    result.add_argument(
-        "--binary-dir",
-        type=Path,
-        default=ROOT / "zig-out" / "bin",
-        help="directory containing json-bench/msgpack-bench for --no-build",
     )
     result.add_argument(
         "--plot-only",
