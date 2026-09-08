@@ -705,7 +705,7 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
 <script src="{HIGHCHARTS_CDN}modules/offline-exporting.js"></script>
 <style>
   body {{ font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 24px 32px 48px; background: #f3f6f9; color: #1f2733; }}
-  header {{ max-width: 1000px; margin: 0 auto 22px; }}
+  header {{ max-width: 1000px; margin: 0 auto 22px; text-align: center; }}
   header h1 {{ margin: 0 0 6px; font-size: 24px; color: #141a23; }}
   header p  {{ margin: 0; color: #4a5568; font-size: 14px; }}
   h2 {{ font-size: 16px; margin: 0 0 12px; color: #141a23; }}
@@ -715,7 +715,7 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
   .plot-row section.plot {{ max-width: none; margin: 0; }}
   @media (max-width: 900px) {{ .plot-row {{ grid-template-columns: minmax(0, 1fr); }} }}
   .hc-container {{ width: 100%; }}
-  footer {{ max-width: 1000px; margin: 4px auto 0; color: #718096; font-size: 12px; }}
+  footer {{ max-width: 1000px; margin: 4px auto 0; color: #718096; font-size: 12px; text-align: center; }}
 </style>
 </head>
 <body>
