@@ -2,7 +2,7 @@
     .name = .benchmarks,
     .version = "0.0.1",
     .fingerprint = 0x41bc1c58c2f47e93,
-    .minimum_zig_version = "0.17.0-dev.1963+e00c6c439",
+    .minimum_zig_version = "0.15.2",
     .dependencies = .{
         .serde = .{
             .url = "https://github.com/OrlovEvgeny/serde.zig/archive/refs/tags/v1.0.8.tar.gz",
