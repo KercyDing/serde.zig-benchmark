@@ -12,9 +12,11 @@ The Zig programs already perform warmup and repeat each fixture according to
 its size and print one task-tagged metric line per dataset. This driver runs
 every format/implementation combination in separate processes, keeps the raw
 text for auditability, aggregates process runs by median, and renders one web
-page (``results/index.html``) with Highcharts column charts, then opens it in
-your browser. No Python chart library is needed; the page loads Highcharts
-from a CDN (first open requires network).
+page (``results/index.html``) with Highcharts column charts — for each task two
+side-by-side charts: throughput in GB/s and rate in ops/s. Then it opens the
+page in your browser.
+No Python chart library is needed; the page loads Highcharts from a CDN (first
+open requires network).
 
 Typical use::
 
@@ -254,6 +256,8 @@ class SummaryRow(TypedDict):
     stdev_ms: float
     throughput_mib_s: float
     throughput_gb_s: float
+    latency_us: float
+    ops_per_s: float
 
 
 def parse_label(label: str) -> tuple[str, str]:
@@ -538,25 +542,32 @@ HIGHCHARTS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/highcharts/8.2.0/"
 def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
     """Write an interactive Highcharts page (library from CDN, like yyjson).
 
-    Layout: one column chart per format and user task, with the participating
-    implementations shown as separate series. No Python chart library.
+    Layout: for each format, user task and metric (GB/s and ops/s) one column
+    chart, with the participating implementations as separate series. No Python
+    chart library.
     """
     by_key = {
         (str(row["format"]), str(row["implementation"]), str(row["dataset"]), str(row["task"])): row
         for row in rows
     }
     chart_counter = 0
+    # metric key -> (axis title, decimals for tooltips)
+    CHART_METRICS = (("gb", "GB/s", 3), ("ops", "ops/s", 0))
 
     def chart_html(
         datasets: list[str],
         series: list[dict[str, object]],
         height: int,
         filename: str,
+        metric: str,
     ) -> str:
         nonlocal chart_counter
         chart_counter += 1
         container_id = f"chart-{chart_counter}"
         categories = [dataset.removesuffix(".json") for dataset in datasets]
+        metric_title, decimals = next(
+            (unit, dec) for key, unit, dec in CHART_METRICS if key == metric
+        )
         options = {
             "chart": {
                 "type": "column",
@@ -571,10 +582,10 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
                 "categories": categories,
                 "labels": {"rotation": -35, "style": {"fontSize": "11px"}},
             },
-            "yAxis": {"title": {"text": "ops/s"}, "min": 0},
+            "yAxis": {"title": {"text": metric_title}, "min": 0},
             "tooltip": {
                 "shared": True,
-                "pointFormat": "{series.name}: <b>{point.y:.0f} ops/s</b><br/>",
+                "pointFormat": f"{{series.name}}: <b>{{point.y:.{decimals}f}} {metric_title}</b><br/>",
             },
             "legend": {"layout": "horizontal", "align": "center", "verticalAlign": "top"},
             "plotOptions": {"column": {"borderRadius": 3, "pointPadding": 0.06, "groupPadding": 0.2}},
@@ -590,23 +601,30 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
         implementation: str,
         task: str,
         datasets: list[str],
+        metric: str,
     ) -> list[float | None]:
-        return [
-            None
-            if (format_name, implementation, dataset, task) not in by_key
-            else float(by_key[(format_name, implementation, dataset, task)]["ops_per_s"])
-            for dataset in datasets
-        ]
+        def value_for(dataset: str) -> float | None:
+            row = by_key.get((format_name, implementation, dataset, task))
+            if row is None:
+                return None
+            if metric == "gb":
+                return float(row["throughput_gb_s"])
+            if metric == "ops":
+                return float(row["ops_per_s"])
+            raise ValueError(f"unknown metric {metric!r}")
+
+        return [value_for(dataset) for dataset in datasets]
 
     def collect_series(
         series_specs: list[tuple[str, str, str, str, list[str]]],
+        metric: str,
     ) -> list[dict[str, object]]:
         result: list[dict[str, object]] = []
         for name, format_name, implementation, task, datasets in series_specs:
             result.append(
                 {
                     "name": name,
-                    "data": series_points(format_name, implementation, task, datasets),
+                    "data": series_points(format_name, implementation, task, datasets, metric),
                 }
             )
         return result
@@ -630,29 +648,44 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
             ]
             if not group:
                 continue
-            series = collect_series(
-                [
-                    (
-                        implementation,
-                        format_name,
-                        implementation,
-                        task,
-                        group,
-                    )
-                    for implementation in implementations
-                    if any(
-                        (format_name, implementation, dataset, task) in by_key
-                        for dataset in group
-                    )
-                ]
-            )
-            if series:
-                sections.append(
+            implementations_present = [
+                implementation
+                for implementation in implementations
+                if any(
+                    (format_name, implementation, dataset, task) in by_key
+                    for dataset in group
+                )
+            ]
+            if not implementations_present:
+                continue
+            pair: list[str] = []
+            for metric, unit, _ in CHART_METRICS:
+                series = collect_series(
+                    [
+                        (
+                            implementation,
+                            format_name,
+                            implementation,
+                            task,
+                            group,
+                        )
+                        for implementation in implementations_present
+                    ],
+                    metric,
+                )
+                pair.append(
                     card(
-                        f"{label} · {task}",
-                        chart_html(group, series, 430, f"{format_name}-{token}"),
+                        f"{label} · {task} · {unit}",
+                        chart_html(
+                            group,
+                            series,
+                            430,
+                            f"{format_name}-{token}-{metric}",
+                            metric,
+                        ),
                     )
                 )
+            sections.append("<div class=\"plot-row\">\n" + "\n".join(pair) + "\n</div>")
 
     if not sections:
         raise RuntimeError("no measurements to chart for the selected formats")
@@ -678,6 +711,9 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
   h2 {{ font-size: 16px; margin: 0 0 12px; color: #141a23; }}
   .chart-note {{ margin: -4px 0 12px; color: #4a5568; font-size: 14px; }}
   section.plot {{ max-width: 1000px; margin: 0 auto 28px; background: #ffffff; border-radius: 12px; padding: 16px 20px; box-shadow: 0 1px 3px rgba(16, 24, 40, 0.08); }}
+  .plot-row {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; max-width: 1320px; margin: 0 auto 28px; align-items: start; }}
+  .plot-row section.plot {{ max-width: none; margin: 0; }}
+  @media (max-width: 900px) {{ .plot-row {{ grid-template-columns: minmax(0, 1fr); }} }}
   .hc-container {{ width: 100%; }}
   footer {{ max-width: 1000px; margin: 4px auto 0; color: #718096; font-size: 12px; }}
 </style>
