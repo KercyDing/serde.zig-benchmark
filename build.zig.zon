@@ -8,6 +8,15 @@
             .url = "https://github.com/OrlovEvgeny/serde.zig/archive/f9172b5a11a3f74ee022212cbd7928426bc1c630.tar.gz",
             .hash = "serde-1.1.0-1DszT1aLEAD-3qLPzBLlFt3TaIMWUuUD7aDdjxkuEKsd",
         },
+        .msgpack = .{
+            .url = "https://github.com/lalinsky/msgpack.zig/archive/refs/heads/master.tar.gz",
+            .hash = "msgpack-0.9.0-ZOu9PEGgAgDvbGsCCi8OPV-n25bHqJniaZYM45BMJT4a",
+        },
+        .zig_msgpack = .{
+            .url = "https://github.com/zigcc/zig-msgpack/archive/refs/tags/0.0.17.tar.gz",
+            .hash = "zig_msgpack-0.0.14-evvueL5SBQACmim6j6klQ9wWIIG_UxGlPvVYdiNy0KT8",
+        },
+
     },
     .paths = .{
         "build.zig",

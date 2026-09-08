@@ -1,24 +1,18 @@
 const std = @import("std");
 const serde = @import("serde");
+const common = @import("shared.zig");
 
 const Allocator = std.mem.Allocator;
-const input_allocator = std.heap.c_allocator;
-const data_limit = 128 * 1024 * 1024;
-
-const datasets = [_][]const u8{
-    "canada.json",
-    "citm_catalog.json",
-    "fgo.json",
-    "github_events.json",
-    "gsoc-2018.json",
-    "lottie.json",
-    "otfcc.json",
-    "poet.json",
-    "twitter.json",
-    "twitterescaped.json",
-};
-
-const Mode = enum { generic, typed };
+const input_allocator = common.input_allocator;
+const data_limit = common.data_limit;
+const datasets = common.datasets;
+const repeatCount = common.repeatCount;
+const isTypedDataset = common.isTypedDataset;
+const nowNanoseconds = common.nowNanoseconds;
+const CanadaDocument = common.CanadaDocument;
+const GithubEvent = common.GithubEvent;
+const Poem = common.Poem;
+const TwitterDocument = common.TwitterDocument;
 
 const GenericField = struct {
     key: []const u8,
@@ -88,108 +82,27 @@ pub const GenericValue = union(enum) {
     }
 };
 
-const TwitterUser = struct {
-    id: u64,
-    name: []const u8,
-    screen_name: []const u8,
-    location: []const u8,
-    description: []const u8,
-    verified: bool,
-    followers_count: u64,
-    friends_count: u64,
-    statuses_count: ?u64,
-};
-
-const TwitterStatus = struct {
-    created_at: []const u8,
-    id: u64,
-    text: []const u8,
-    user: TwitterUser,
-    retweet_count: u64,
-    favorite_count: u64,
-};
-
-const TwitterDocument = struct { statuses: []const TwitterStatus };
-
-const CanadaCoordinate = [2]f64;
-const CanadaGeometry = struct {
-    type: []const u8,
-    coordinates: []const []const CanadaCoordinate,
-};
-const CanadaFeature = struct {
-    type: []const u8,
-    properties: struct { name: []const u8 },
-    geometry: CanadaGeometry,
-};
-const CanadaDocument = struct {
-    type: []const u8,
-    features: []const CanadaFeature,
-};
-
-const Poem = struct {
-    desc: []const u8,
-    name: []const u8,
-    id: []const u8,
-};
-
-const GithubActor = struct {
-    gravatar_id: []const u8,
-    login: []const u8,
-    avatar_url: []const u8,
-    url: []const u8,
-    id: u64,
-};
-const GithubRepository = struct {
-    url: []const u8,
-    id: u64,
-    name: []const u8,
-};
-const GithubEvent = struct {
-    type: []const u8,
-    created_at: []const u8,
-    actor: GithubActor,
-    repo: GithubRepository,
-    public: bool,
-    id: []const u8,
-};
+const Mode = enum { generic, typed };
 
 pub fn main(init: std.process.Init.Minimal) !void {
     var args = std.process.Args.Iterator.init(init.args);
     _ = args.skip();
+    const mode_argument = args.next() orelse return error.InvalidArguments;
+    if (args.next() != null) return error.InvalidArguments;
+    const mode: Mode = if (std.mem.eql(u8, mode_argument, "generic")) .generic else if (std.mem.eql(u8, mode_argument, "typed")) .typed else return error.InvalidArguments;
 
-    var mode: Mode = .generic;
-    while (args.next()) |arg| {
-        if (std.mem.eql(u8, arg, "--help")) {
-            printHelp();
-            return;
-        } else if (std.mem.eql(u8, arg, "generic")) {
-            mode = .generic;
-        } else if (std.mem.eql(u8, arg, "typed")) {
-            mode = .typed;
-        } else {
-            return error.InvalidArguments;
-        }
-    }
-
-    std.debug.print("MessagePack benchmark ({s})\n", .{@tagName(@import("builtin").mode)});
+    std.debug.print("MessagePack serde.zig benchmark ({s})\n", .{@tagName(@import("builtin").mode)});
     std.debug.print("data: data/msgpack, input read and cleanup excluded\n", .{});
 
     var ran_file = false;
     for (datasets) |name| {
         if (mode == .typed and !isTypedDataset(name)) continue;
         ran_file = true;
-
         var path_buffer: [64]u8 = undefined;
         const stem = name[0 .. name.len - ".json".len];
         const path = try std.fmt.bufPrint(&path_buffer, "data/msgpack/{s}.msgpack", .{stem});
-        const input = try std.Io.Dir.cwd().readFileAlloc(
-            std.Options.debug_io,
-            path,
-            input_allocator,
-            .limited(data_limit),
-        );
+        const input = try std.Io.Dir.cwd().readFileAlloc(std.Options.debug_io, path, input_allocator, .limited(data_limit));
         defer input_allocator.free(input);
-
         const repeats = repeatCount(input.len);
         std.debug.print("\n{s} ({d} bytes, {d} repeats)\n", .{ name, input.len, repeats });
         if (mode == .generic) {
@@ -203,15 +116,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
     }
     if (!ran_file) return error.InvalidArguments;
-}
-
-fn printHelp() void {
-    std.debug.print(
-        "usage: msgpack-bench [generic|typed]\n\n" ++
-            "  generic  measure decode and encode for every corpus file\n" ++
-            "  typed    measure decode and encode for the typed corpus subset\n",
-        .{},
-    );
 }
 
 fn parseArray(allocator: Allocator, deserializer: anytype) @TypeOf(deserializer.*).Error!GenericValue {
@@ -235,11 +139,43 @@ fn parseObject(allocator: Allocator, deserializer: anytype) @TypeOf(deserializer
 }
 
 fn runTyped(name: []const u8, input: []const u8, repeats: usize) !void {
-    if (std.mem.eql(u8, name, "canada.json")) return runDecode(CanadaDocument, "serde typed", input, repeats);
-    if (std.mem.eql(u8, name, "github_events.json")) return runDecode([]const GithubEvent, "serde typed", input, repeats);
-    if (std.mem.eql(u8, name, "poet.json")) return runDecode([]const Poem, "serde typed", input, repeats);
-    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runDecode(TwitterDocument, "serde typed", input, repeats);
+    if (std.mem.eql(u8, name, "canada.json")) return runTypedDecode(CanadaDocument, "serde typed decode", input, repeats);
+    if (std.mem.eql(u8, name, "github_events.json")) return runTypedDecode([]const GithubEvent, "serde typed decode", input, repeats);
+    if (std.mem.eql(u8, name, "poet.json")) return runTypedDecode([]const Poem, "serde typed decode", input, repeats);
+    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runTypedDecode(TwitterDocument, "serde typed decode", input, repeats);
     return error.InvalidArguments;
+}
+
+fn runTypedDecode(comptime T: type, name: []const u8, input: []const u8, repeats: usize) !void {
+    var fixture_arena = std.heap.ArenaAllocator.init(input_allocator);
+    defer fixture_arena.deinit();
+    const value = try serde.msgpack.fromSlice(T, fixture_arena.allocator(), input);
+    const wire = try serde.msgpack.toSlice(input_allocator, value);
+    defer input_allocator.free(wire);
+
+    var warmup_arena = std.heap.ArenaAllocator.init(input_allocator);
+    defer warmup_arena.deinit();
+    _ = try serde.msgpack.fromSlice(T, warmup_arena.allocator(), wire);
+
+    var elapsed: u64 = 0;
+    for (0..repeats) |_| {
+        var arena = std.heap.ArenaAllocator.init(input_allocator);
+        defer arena.deinit();
+        const start = nowNanoseconds();
+        const decoded = try serde.msgpack.fromSlice(T, arena.allocator(), wire);
+        const end = nowNanoseconds();
+        std.mem.doNotOptimizeAway(decoded);
+        elapsed += @max(end - start, 1);
+    }
+
+    const total_bytes: f64 = @floatFromInt(wire.len * repeats);
+    const seconds: f64 = @as(f64, @floatFromInt(elapsed)) / std.time.ns_per_s;
+    std.debug.print("  {s}: {d:.6} ms/op, {d:.2} MiB/s ({d} bytes)\n", .{
+        name,
+        @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(repeats)) / std.time.ns_per_ms,
+        total_bytes / seconds / (1024.0 * 1024.0),
+        wire.len,
+    });
 }
 
 fn runTypedEncode(name: []const u8, input: []const u8, repeats: usize) !void {
@@ -251,11 +187,41 @@ fn runTypedEncode(name: []const u8, input: []const u8, repeats: usize) !void {
 }
 
 fn runTypedRoundtrip(name: []const u8, input: []const u8, repeats: usize) !void {
-    if (std.mem.eql(u8, name, "canada.json")) return runRoundtrip(CanadaDocument, "serde typed roundtrip", input, repeats);
-    if (std.mem.eql(u8, name, "github_events.json")) return runRoundtrip([]const GithubEvent, "serde typed roundtrip", input, repeats);
-    if (std.mem.eql(u8, name, "poet.json")) return runRoundtrip([]const Poem, "serde typed roundtrip", input, repeats);
-    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runRoundtrip(TwitterDocument, "serde typed roundtrip", input, repeats);
+    if (std.mem.eql(u8, name, "canada.json")) return runTypedRoundtripWire(CanadaDocument, "serde typed roundtrip", input, repeats);
+    if (std.mem.eql(u8, name, "github_events.json")) return runTypedRoundtripWire([]const GithubEvent, "serde typed roundtrip", input, repeats);
+    if (std.mem.eql(u8, name, "poet.json")) return runTypedRoundtripWire([]const Poem, "serde typed roundtrip", input, repeats);
+    if (std.mem.eql(u8, name, "twitter.json") or std.mem.eql(u8, name, "twitterescaped.json")) return runTypedRoundtripWire(TwitterDocument, "serde typed roundtrip", input, repeats);
     return error.InvalidArguments;
+}
+
+fn runTypedRoundtripWire(comptime T: type, name: []const u8, input: []const u8, repeats: usize) !void {
+    var fixture_arena = std.heap.ArenaAllocator.init(input_allocator);
+    defer fixture_arena.deinit();
+    const value = try serde.msgpack.fromSlice(T, fixture_arena.allocator(), input);
+    const wire = try serde.msgpack.toSlice(input_allocator, value);
+    defer input_allocator.free(wire);
+
+    var elapsed: u64 = 0;
+    for (0..repeats) |_| {
+        var arena = std.heap.ArenaAllocator.init(input_allocator);
+        defer arena.deinit();
+        const start = nowNanoseconds();
+        const decoded = try serde.msgpack.fromSlice(T, arena.allocator(), wire);
+        const encoded = try serde.msgpack.toSlice(input_allocator, decoded);
+        const end = nowNanoseconds();
+        std.mem.doNotOptimizeAway(encoded.ptr);
+        input_allocator.free(encoded);
+        elapsed += @max(end - start, 1);
+    }
+
+    const total_bytes: f64 = @floatFromInt(wire.len * repeats);
+    const seconds: f64 = @as(f64, @floatFromInt(elapsed)) / std.time.ns_per_s;
+    std.debug.print("  {s}: {d:.6} ms/op, {d:.2} MiB/s ({d} bytes)\n", .{
+        name,
+        @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(repeats)) / std.time.ns_per_ms,
+        total_bytes / seconds / (1024.0 * 1024.0),
+        wire.len,
+    });
 }
 
 fn runDecode(comptime T: type, name: []const u8, input: []const u8, repeats: usize) !void {
@@ -334,22 +300,4 @@ fn runRoundtrip(comptime T: type, name: []const u8, input: []const u8, repeats: 
         @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(repeats)) / std.time.ns_per_ms,
         total_bytes / seconds / (1024.0 * 1024.0),
     });
-}
-
-fn isTypedDataset(name: []const u8) bool {
-    return std.mem.eql(u8, name, "canada.json") or
-        std.mem.eql(u8, name, "github_events.json") or
-        std.mem.eql(u8, name, "poet.json") or
-        std.mem.eql(u8, name, "twitter.json") or
-        std.mem.eql(u8, name, "twitterescaped.json");
-}
-
-fn repeatCount(size: usize) usize {
-    const target_bytes = 64 * 1024 * 1024;
-    if (size == 0 or size >= target_bytes) return 1;
-    return (target_bytes + size - 1) / size;
-}
-
-inline fn nowNanoseconds() u64 {
-    return @intCast(std.Io.Clock.awake.now(std.Options.debug_io).nanoseconds);
 }

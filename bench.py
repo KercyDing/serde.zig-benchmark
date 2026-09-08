@@ -70,18 +70,40 @@ MODES = ("generic", "typed")
 OPERATIONS = ("roundtrip", "decode", "encode")
 FORMAT_LABELS = {"json": "JSON", "msgpack": "MessagePack"}
 IMPLEMENTATIONS = ("serde", "std.json")
+MSGPACK_IMPLEMENTATIONS = ("serde", "msgpack.zig", "zig-msgpack")
+# msgpack.zig (lalinsky) is typed-only; zig-msgpack is generic (Payload DOM) only.
+MSGPACK_SUPPORTED_MODES = {"serde": MODES, "msgpack.zig": ("typed",), "zig-msgpack": ("generic",)}
+# Per-implementation datasets that cannot be benchmarked (msgpack.zig cannot
+# decode fixed-array geometry types in canada.json).
+IMPL_EXCLUDED_DATASETS = {"msgpack.zig": {"canada.json"}}
 
 
 def implementations_for_format(format_name: str) -> tuple[str, ...]:
-    return IMPLEMENTATIONS if format_name == "json" else ("serde",)
+    return IMPLEMENTATIONS if format_name == "json" else MSGPACK_IMPLEMENTATIONS
+
+
+def supported_modes(format_name: str, implementation: str) -> tuple[str, ...]:
+    if format_name == "json":
+        return MODES
+    return MSGPACK_SUPPORTED_MODES[implementation]
 
 
 def implementation_argument(implementation: str) -> str:
-    return "std" if implementation == "std.json" else implementation
+    return {
+        "serde": "serde",
+        "std.json": "std",
+        "msgpack.zig": "lalinsky",
+        "zig-msgpack": "zig_msgpack",
+    }[implementation]
 
 
 def implementation_directory(implementation: str) -> str:
-    return "serde.zig" if implementation == "serde" else "std"
+    return {
+        "serde": "serde.zig",
+        "std.json": "std",
+        "msgpack.zig": "msgpack.zig",
+        "zig-msgpack": "zig_msgpack",
+    }[implementation]
 
 DATASET_RE = re.compile(
     r"^\s*(?P<dataset>\S+)\s+\((?P<input_bytes>\d+) bytes,\s+(?P<repeats>\d+) repeats\)\s*$"
@@ -111,7 +133,7 @@ class Measurement:
 
     @property
     def measured_bytes(self) -> int:
-        if self.operation == "encode" and self.output_bytes is not None:
+        if self.output_bytes is not None:
             return self.output_bytes
         return self.input_bytes
 
@@ -132,12 +154,6 @@ class SummaryRow(TypedDict):
     stdev_ms: float
     throughput_mib_s: float
     throughput_gb_s: float
-
-
-class RankingEntry(TypedDict):
-    name: str
-    ops_per_sec: float
-    size_bytes: float
 
 
 def positive_int(value: str) -> int:
@@ -166,9 +182,17 @@ def build_command(
     zig: str,
     optimize: str | None,
 ) -> list[str]:
-    command = [zig, "build", f"bench-{format_name}", f"-Dmode={mode}"]
     if format_name == "json":
-        command.append(f"-Dimplementation={implementation_argument(implementation)}")
+        step = "bench-json"
+        build_args = [f"-Dmode={mode}", f"-Dimplementation={implementation_argument(implementation)}"]
+    else:
+        step = {
+            "serde": "bench-msgpack-serde",
+            "msgpack.zig": "bench-msgpack-msgpack-zig",
+            "zig-msgpack": "bench-msgpack-zig-msgpack",
+        }[implementation]
+        build_args = [f"-Dmode={mode}"]
+    command = [zig, "build", step, *build_args]
     if optimize:
         command.append(f"-Doptimize={optimize}")
     return command
@@ -195,7 +219,14 @@ def parse_output(output: str, format_name: str, mode: str, run: int) -> list[Mea
             raise RuntimeError(f"found metric before a dataset header: {line!r}")
 
         label = metric_match.group("label").strip().lower()
-        implementation = "std.json" if label.startswith("std.json ") else "serde"
+        if label.startswith("std.json "):
+            implementation = "std.json"
+        elif label.startswith("msgpack.zig "):
+            implementation = "msgpack.zig"
+        elif label.startswith("zig-msgpack "):
+            implementation = "zig-msgpack"
+        else:
+            implementation = "serde"
         if label.endswith(" encode"):
             operation = "encode"
         elif label.endswith(" roundtrip"):
@@ -223,6 +254,7 @@ def parse_output(output: str, format_name: str, mode: str, run: int) -> list[Mea
 
 def expected_measurements(format_name: str, implementation: str, mode: str) -> set[tuple[str, str, str]]:
     datasets = TYPED_DATASETS if mode == "typed" else frozenset(DATASETS)
+    datasets = frozenset(dataset for dataset in datasets if dataset not in IMPL_EXCLUDED_DATASETS.get(implementation, ()))
     return {(implementation, dataset, operation) for dataset in datasets for operation in OPERATIONS}
 
 
@@ -283,7 +315,7 @@ def run_benchmarks(
         for implementation in implementations_for_format(format_name):
             raw_dir = output_dir / format_name / implementation_directory(implementation)
             raw_dir.mkdir(parents=True, exist_ok=True)
-            for mode in modes:
+            for mode in sorted(set(modes) & set(supported_modes(format_name, implementation))):
                 command = build_command(
                     format_name,
                     implementation,
@@ -371,7 +403,12 @@ def write_csv(path: Path, rows: Sequence[SummaryRow]) -> None:
 
 def write_markdown(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
     by_key = {(str(row["format"]), str(row["implementation"]), str(row["mode"]), str(row["dataset"]), str(row["operation"])): row for row in rows}
-    series_order = [(format_name, implementation, mode) for format_name in FORMATS for implementation in IMPLEMENTATIONS for mode in MODES]
+    series_order = [
+        (format_name, implementation, mode)
+        for format_name in FORMATS
+        for implementation in implementations_for_format(format_name)
+        for mode in supported_modes(format_name, implementation)
+    ]
     datasets = [dataset for dataset in DATASETS if any(key[3] == dataset for key in by_key)]
 
     lines = [
@@ -468,56 +505,6 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
             f"<script>Highcharts.chart({json.dumps(container_id)}, {json.dumps(options)});</script>\n"
         )
 
-    def ranking_chart_html(entries: Sequence[RankingEntry]) -> str:
-        nonlocal chart_counter
-        chart_counter += 1
-        container_id = f"chart-{chart_counter}"
-        ranked = sorted(entries, key=lambda entry: entry["ops_per_sec"], reverse=True)
-        max_ops = max(entry["ops_per_sec"] for entry in ranked)
-        max_size = max(entry["size_bytes"] for entry in ranked)
-
-        def point(value: float, maximum: float, absolute: str) -> dict[str, object]:
-            return {"y": value / maximum * 100.0, "custom": {"absolute": absolute}}
-
-        options = {
-            "chart": {"type": "bar", "height": 360, "backgroundColor": "transparent", "animation": True},
-            "title": {"text": None},
-            "credits": {"enabled": False},
-            "exporting": {"filename": "combined-ops-size-ranking"},
-            "xAxis": {"categories": [entry["name"] for entry in ranked], "title": {"text": None}},
-            "yAxis": {
-                "min": -100,
-                "max": 100,
-                "tickInterval": 25,
-                "title": {"text": None},
-                "labels": {"format": "{value}%"},
-                "plotLines": [{"value": 0, "color": "#9aa5b1", "width": 1, "zIndex": 3}],
-            },
-            "tooltip": {
-                "shared": True,
-                "useHTML": True,
-                "pointFormat": "<span style=\"color:{point.color}\">●</span> {series.name}: <b>{point.custom.absolute}</b><br/>",
-            },
-            "legend": {"layout": "horizontal", "align": "center", "verticalAlign": "top"},
-            "plotOptions": {"series": {"borderRadius": 3, "pointPadding": 0.08, "groupPadding": 0.16}},
-            "series": [
-                {
-                    "name": "Encoded size",
-                    "color": "#3a9d58",
-                    "data": [point(-entry["size_bytes"], max_size, f"{entry['size_bytes'] / 1024.0:.1f} KiB") for entry in ranked],
-                },
-                {
-                    "name": "Combined ops/s",
-                    "color": "#3478dc",
-                    "data": [point(entry["ops_per_sec"], max_ops, f"{entry['ops_per_sec']:.0f} ops/s") for entry in ranked],
-                },
-            ],
-        }
-        return (
-            f'<div id="{container_id}" class="hc-container"></div>\n'
-            f"<script>Highcharts.chart({json.dumps(container_id)}, {json.dumps(options)});</script>\n"
-        )
-
     def series_points(
         key_format: str,
         key_implementation: str,
@@ -550,47 +537,6 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
         return "<section class=\"plot\">\n" f"<h2>{heading}</h2>\n{detail}{plot}\n" "</section>"
 
     sections: list[str] = []
-    compare_datasets = [
-        dataset
-        for dataset in DATASETS
-        if any(("json", implementation, "typed", dataset, "decode") in by_key for implementation in implementations_for_format("json"))
-        and ("msgpack", "serde", "typed", dataset, "decode") in by_key
-    ]
-    ranking_entries: list[RankingEntry] = []
-    for format_name in FORMATS:
-        for implementation in implementations_for_format(format_name):
-            ops_samples: list[float] = []
-            encoded_sizes: list[int] = []
-            for dataset in compare_datasets:
-                decode = by_key.get((format_name, implementation, "typed", dataset, "decode"))
-                encode = by_key.get((format_name, implementation, "typed", dataset, "encode"))
-                if decode is None or encode is None:
-                    break
-                total_ms = float(decode["median_ms"]) + float(encode["median_ms"])
-                if total_ms <= 0:
-                    break
-                ops_samples.append(1000.0 / total_ms)
-                encoded = encode["output_bytes"]
-                if encoded is not None:
-                    encoded_sizes.append(int(encoded))
-            if len(ops_samples) == len(compare_datasets) and len(encoded_sizes) == len(compare_datasets):
-                ranking_entries.append(
-                    {
-                        "name": f"{FORMAT_LABELS[format_name]} / {implementation}",
-                        "ops_per_sec": statistics.geometric_mean(ops_samples),
-                        "size_bytes": statistics.geometric_mean(encoded_sizes),
-                    }
-                )
-    if ranking_entries:
-        sections.append(
-            card(
-                "Combined Ops/s & Size Ranking",
-                ranking_chart_html(ranking_entries),
-                "Sorted by geometric-mean combined ops/s across encode and decode on the shared typed corpus. "
-                "Encoded size extends left and combined ops/s right; both sides are normalized independently. "
-                "Hover for absolute values.",
-            )
-        )
 
     # Cards grouped by representation family (generic / typed), with the
     # roundtrip operation first in each family.

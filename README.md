@@ -2,6 +2,11 @@
 
 Real-world benchmarks of `serde.zig` on JSON and MessagePack files.
 
+Benchmarks are grouped by user-visible task, not library internals: each
+chart only compares libraries that deliver the same result for the same
+workload (typed encode/decode, generic decode/encode). There is no overall
+winner ranking.
+
 ## Quick start
 
 Install the Zig version pinned in `mise.toml`, then run:
@@ -17,9 +22,8 @@ mise install
 `uv run bench.py` runs all benchmarks, writes the report to
 `results/single_thread/`, then opens it in your browser.
 
-Results are organized by format and implementation. The page leads with a
-combined-ops/s-and-size ranking over the shared typed corpus, then presents
-separate JSON and MessagePack decode/encode charts.
+Results are organized by format and representation family (generic / typed),
+each with roundtrip, decode, and encode charts.
 
 It builds with `-Doptimize=ReleaseFast` and has no Python dependencies. The
 page loads Highcharts from a CDN, so the first open needs network.

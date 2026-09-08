@@ -1,7 +1,7 @@
 const std = @import("std");
 const serde = @import("serde");
 const json_bench = @import("json.zig");
-const msgpack_bench = @import("msgpack.zig");
+const msgpack_bench = @import("msgpack/serde.zig");
 
 const Allocator = std.mem.Allocator;
 const input_allocator = std.heap.c_allocator;
