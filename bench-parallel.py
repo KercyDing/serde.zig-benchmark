@@ -14,6 +14,7 @@ Examples::
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import re
@@ -191,6 +192,51 @@ def aggregate(measurements: Iterable[Measurement]) -> list[dict[str, object]]:
     ]
 
 
+def write_csv(path: Path, rows: Sequence[dict[str, object]]) -> None:
+    fields = [
+        "format",
+        "implementation",
+        "dataset",
+        "operation",
+        "threads",
+        "runs",
+        "throughput_gb_s",
+        "min_gb_s",
+        "max_gb_s",
+    ]
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def write_markdown(path: Path, rows: Sequence[dict[str, object]], formats: Sequence[str], max_threads: int) -> None:
+    by_key = {
+        (str(row["format"]), str(row["implementation"]), str(row["dataset"]), str(row["operation"]), int(row["threads"])): row
+        for row in rows
+    }
+    lines = ["# serde.zig parallel benchmark results", ""]
+    for format_name in formats:
+        for implementation in implementations_for_format(format_name):
+            for operation in OPERATIONS:
+                lines.extend(
+                    [
+                        f"## {FORMAT_LABELS[format_name]} / {implementation} / {operation}",
+                        "",
+                        "| Threads | " + " | ".join(dataset.removesuffix(".json") for dataset in DATASETS) + " |",
+                        "| ---: | " + " | ".join("---:" for _ in DATASETS) + " |",
+                    ]
+                )
+                for threads in thread_counts(max_threads):
+                    values = []
+                    for dataset in DATASETS:
+                        row = by_key[(format_name, implementation, dataset, operation, threads)]
+                        values.append(f"{float(row['throughput_gb_s']):.3f} GB/s")
+                    lines.append(f"| {threads} | " + " | ".join(values) + " |")
+                lines.append("")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 HIGHCHARTS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/highcharts/8.2.0/"
 
 
@@ -276,8 +322,11 @@ def write_html_page(path: Path, rows: Sequence[dict[str, object]], formats: Sequ
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--format", dest="format_name", choices=("json", "msgpack", "all"), default="all", help="benchmark one format or both (default: all)")
+    result.add_argument("--mode", choices=("typed",), default="typed", help="parallel benchmarks use the typed corpus (default: typed)")
     result.add_argument("--thread", type=positive_int, default=os.cpu_count() or 1, help="maximum worker threads (default: all logical CPUs)")
     result.add_argument("--runs", type=positive_int, default=10, help="independent process runs (default: 10)")
+    result.add_argument("--output", dest="exports", action="append", choices=("csv", "md"), default=None, help="write only the chosen summary file(s), without the page (repeatable)")
+    result.add_argument("--no-plot", action="store_true", help="write summary.csv and summary.md without the page")
     result.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT, help=f"directory for index.html, measurements.json, and raw logs (default: {DEFAULT_OUTPUT})")
     result.add_argument("--zig", default=os.environ.get("ZIG", "zig"), help="Zig executable (default: $ZIG or zig)")
     result.add_argument("--optimize", default="ReleaseFast", help="optimization mode forwarded as -Doptimize (default: ReleaseFast)")
@@ -300,7 +349,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         summary = payload["summary"]
         runs = int(payload["metadata"]["runs"])
         max_threads = int(payload["metadata"]["max_threads"])
-        formats = tuple(payload["metadata"]["formats"])
+        saved_formats = tuple(payload["metadata"]["formats"])
+        formats = tuple(format_name for format_name in saved_formats if format_name in selected_formats(args.format_name))
+        if not formats:
+            raise SystemExit(f"--format {args.format_name} has no saved parallel measurements")
+        summary = [row for row in summary if str(row["format"]) in formats]
     else:
         measurements: list[Measurement] = []
         formats = selected_formats(args.format_name)
@@ -336,11 +389,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         }
         summary_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
-    page = output_dir / "index.html"
-    write_html_page(page, summary, formats, runs, max_threads)
-    print(f"wrote {summary_path}")
-    print(f"wrote {page}")
-    webbrowser.open(page.resolve().as_uri())
+    if args.exports:
+        want_csv = "csv" in args.exports
+        want_md = "md" in args.exports
+        want_page = False
+    elif args.no_plot:
+        want_csv, want_md, want_page = True, True, False
+    else:
+        want_csv, want_md, want_page = True, True, True
+
+    written: list[Path] = [] if args.plot_only else [summary_path]
+    if want_csv:
+        csv_path = output_dir / "summary.csv"
+        write_csv(csv_path, summary)
+        written.append(csv_path)
+    if want_md:
+        markdown_path = output_dir / "summary.md"
+        write_markdown(markdown_path, summary, formats, max_threads)
+        written.append(markdown_path)
+    if want_page:
+        page = output_dir / "index.html"
+        write_html_page(page, summary, formats, runs, max_threads)
+        written.append(page)
+
+    for path in written:
+        print(f"wrote {path}")
+    if want_page:
+        webbrowser.open(page.resolve().as_uri())
     return 0
 
 

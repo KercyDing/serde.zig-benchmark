@@ -8,68 +8,59 @@ Install the Zig version pinned in `mise.toml`, then run:
 
 ```sh
 mise install
+```
+
+## Benchmark runners
+
+### `bench.py`
+
+`uv run bench.py` runs all benchmarks, writes the report to
+`results/single_thread/`, then opens it in your browser.
+
+Results are organized by format and implementation. The page leads with a
+combined-ops/s-and-size ranking over the shared typed corpus, then presents
+separate JSON and MessagePack decode/encode charts.
+
+It builds with `-Doptimize=ReleaseFast` and has no Python dependencies. The
+page loads Highcharts from a CDN, so the first open needs network.
+
+```sh
 uv run bench.py
 ```
 
-`uv run bench.py` runs all benchmarks and writes `index.html`,
-`summary.csv` and `summary.md` into `results/single_thread/`, then opens the page in
-your browser. It builds with `-Doptimize=ReleaseFast` and has no Python
-dependencies (the page loads Highcharts from a CDN, so the first open needs
-network). JSON logs are split between `results/single_thread/json/serde.zig/`
-and `results/single_thread/json/std/`; MessagePack logs are in
-`results/single_thread/msgpack/serde.zig/`.
-The combined summary stays in `results/single_thread/`. The page leads with a
-combined-ops/s-and-size ranking over the shared typed corpus, then presents
-separate JSON and MessagePack decode/encode charts with generic and typed
-results where available.
+### `bench-parallel.py`
 
-Examples:
-
-```sh
-uv run bench.py --runs 20 --mode generic
-uv run bench.py --format msgpack
-uv run bench.py --no-plot
-uv run bench.py --output csv
-uv run bench.py --plot-only
-```
-
-- `--runs 20 --mode generic`: twenty process runs, generic representation only.
-- `--format msgpack`: benchmark one format.
-- `--no-plot`: write summary.csv and summary.md without the page.
-- `--output csv`: write only summary.csv (or `--output md`).
-- `--plot-only`: rebuild outputs from saved results without rerunning.
-
-Zig versions are managed with `mise`. The default is 0.16.0. Use
-`mise -E zig17 exec -- uv run bench.py` for the dev toolchain.
-
-## Running zig build directly
-
-Use `-Doptimize=ReleaseFast`; the default is Debug, which is useless for
-timing.
-
-```sh
-zig build bench-json -Doptimize=ReleaseFast
-zig build bench-msgpack -Doptimize=ReleaseFast
-```
-
-`-Dmode=typed` selects the typed subset.
-
-## Parallel scaling
-
-The parallel benchmark is separate from the single-threaded report. It runs
-the typed JSON and MessagePack corpora with independent worker arenas and
-reports total throughput plus speedup relative to one worker. JSON compares
-serde.zig with `std.json`; MessagePack has only the serde.zig series:
+The parallel runner measures typed JSON and MessagePack scaling with
+independent worker arenas. JSON compares serde.zig with `std.json`; MessagePack
+has only the serde.zig series.
 
 ```sh
 uv run bench-parallel.py
-uv run bench-parallel.py --thread 8
-uv run bench-parallel.py --format msgpack
 ```
 
-The report is written to `results/parallel/index.html`; raw logs are split by
-format and implementation under `results/parallel/json/serde.zig/`,
-`results/parallel/json/std/`, and `results/parallel/msgpack/serde.zig/`.
-The combined summary stays in `results/parallel/`. The tested thread counts
-double from one worker and include the selected maximum when it is not a power
-of two.
+The report is written to `results/parallel/`. Results are organized by format
+and implementation.
+
+Thread counts double from one worker and include the selected maximum when it
+is not a power of two.
+
+## Options
+
+| Script | Option | Description |
+| --- | --- | --- |
+| Both | `--format json\|msgpack\|all` | Select input format(s). |
+| Both | `--runs N` | Independent process runs (default: 10). |
+| Both | `--output csv\|md` | Write only selected export(s); repeatable. |
+| Both | `--no-plot` | Write CSV and Markdown without HTML. |
+| Both | `--output-dir PATH` | Override the result directory. |
+| Both | `--zig PATH` | Zig executable to invoke. |
+| Both | `--optimize MODE` | Zig optimization mode (default: `ReleaseFast`). |
+| Both | `--no-build` | Run an existing binary from `--binary-dir`. |
+| Both | `--binary-dir PATH` | Location of prebuilt benchmark binaries. |
+| Both | `--plot-only` | Rebuild selected reports from `measurements.json`. |
+| `bench.py` | `--mode generic\|typed\|all` | Select representation(s). |
+| `bench-parallel.py` | `--mode typed` | Parallel benchmarks use typed corpora only. |
+| `bench-parallel.py` | `--thread N` | Maximum worker threads (default: all logical CPUs). |
+
+Zig versions are managed with `mise`. The default is 0.16.0. Use
+`mise -E zig17 exec -- uv run bench.py` for the dev toolchain.
