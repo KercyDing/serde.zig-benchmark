@@ -3,3 +3,5 @@ zig-out/
 zig-pkg/
 bench-results/
 __pycache__/
+
+.DS_Store
