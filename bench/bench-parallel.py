@@ -13,7 +13,6 @@ import json
 import os
 import re
 import statistics
-import subprocess
 import sys
 import webbrowser
 from collections.abc import Iterable, Sequence
@@ -21,6 +20,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypedDict, cast
+from engine import positive_int, thread_counts, run_process, run_repetitions
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = ROOT / "results" / "parallel"
@@ -76,23 +76,6 @@ class SummaryRow(TypedDict):
     max_gb_s: float
 
 
-def positive_int(value: str) -> int:
-    try:
-        parsed = int(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError("must be an integer") from exc
-    if parsed < 1:
-        raise argparse.ArgumentTypeError("must be at least 1")
-    return parsed
-
-
-def thread_counts(max_threads: int) -> tuple[int, ...]:
-    counts = [1]
-    while counts[-1] < max_threads:
-        counts.append(min(counts[-1] * 2, max_threads))
-    return tuple(counts)
-
-
 def selected_formats(format_name: str) -> tuple[str, ...]:
     return FORMATS if format_name == "all" else (format_name,)
 
@@ -110,25 +93,6 @@ def build_command(args: argparse.Namespace, format_name: str, implementation: st
     if args.optimize:
         command.append(f"-Doptimize={args.optimize}")
     return command
-
-
-def run_process(command: Sequence[str]) -> str:
-    try:
-        result = subprocess.run(
-            list(command),
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-    except OSError as exc:
-        raise RuntimeError(f"could not start {' '.join(command)}: {exc}") from exc
-
-    output = "\n".join(part for part in (result.stdout, result.stderr) if part)
-    if result.returncode != 0:
-        tail = "\n".join(output.splitlines()[-40:])
-        raise RuntimeError(f"benchmark command failed with exit code {result.returncode}:\n  {' '.join(command)}\n{tail}")
-    return output
 
 
 def parse_output(output: str, run: int, mode: str) -> list[Measurement]:
@@ -382,15 +346,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                     commands[f"{format_name}/{implementation}/{mode}"] = command
                     raw_dir = output_dir / format_name / implementation_directory(implementation)
                     raw_dir.mkdir(parents=True, exist_ok=True)
-                    for run in range(1, args.runs + 1):
-                        print(f"[{format_name}/{implementation}/{mode}] run {run}/{args.runs}: {' '.join(command)}", flush=True)
-                        output = run_process(command)
-                        raw_path = raw_dir / f"{mode}-parallel-{run:02d}.txt"
-                        raw_path.write_text(output, encoding="utf-8")
-                        parsed = parse_output(output, run, mode)
-                        validate_measurements(parsed, format_name, implementation, mode, args.thread)
-                        measurements.extend(parsed)
-                        print(f"  parsed {len(parsed)} measurements -> {raw_path}", flush=True)
+                    collected = run_repetitions(
+                        label=f"{format_name}/{implementation}/{mode}",
+                        command=command,
+                        raw_dir=raw_dir,
+                        stem=f"{mode}-parallel",
+                        runs=args.runs,
+                        parse=lambda out, run, m=mode: parse_output(out, run, m),
+                        validate=lambda meas, f=format_name, i=implementation, m=mode, t=args.thread: validate_measurements(meas, f, i, m, t),
+                    )
+                    measurements.extend(cast(list[Measurement], collected))
         summary = aggregate(measurements)
         runs = args.runs
         max_threads = args.thread

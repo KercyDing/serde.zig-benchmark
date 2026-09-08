@@ -25,7 +25,6 @@ import os
 import platform
 import re
 import statistics
-import subprocess
 import sys
 import webbrowser
 from collections.abc import Iterable, Sequence
@@ -33,9 +32,19 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypedDict, cast
+from engine import positive_int, run_repetitions
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = ROOT / "results" / "single_thread"
+
+
+def selected_values(value: str, choices: Sequence[str], name: str) -> tuple[str, ...]:
+    if value == "all":
+        return tuple(choices)
+    if value not in choices:
+        valid = ", ".join((*choices, "all"))
+        raise ValueError(f"invalid {name} {value!r}; choose from {valid}")
+    return (value,)
 
 
 def serde_version() -> str:
@@ -160,23 +169,7 @@ class SummaryRow(TypedDict):
     throughput_gb_s: float
 
 
-def positive_int(value: str) -> int:
-    try:
-        parsed = int(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError("must be an integer") from exc
-    if parsed < 1:
-        raise argparse.ArgumentTypeError("must be at least 1")
-    return parsed
 
-
-def selected_values(value: str, choices: Sequence[str], name: str) -> tuple[str, ...]:
-    if value == "all":
-        return tuple(choices)
-    if value not in choices:
-        valid = ", ".join((*choices, "all"))
-        raise ValueError(f"invalid {name} {value!r}; choose from {valid}")
-    return (value,)
 
 
 def build_command(
@@ -280,31 +273,6 @@ def validate_measurements(measurements: Sequence[Measurement], format_name: str,
         raise RuntimeError(f"{format_name}/{mode}: " + "; ".join(details))
 
 
-def run_process(command: Sequence[str]) -> str:
-    try:
-        result = subprocess.run(
-            list(command),
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-    except OSError as exc:
-        raise RuntimeError(f"could not start {' '.join(command)}: {exc}") from exc
-
-    # std.debug.print writes to stderr, while build diagnostics may use either
-    # stream. Parsing the concatenation keeps the driver independent of that
-    # implementation detail.
-    output = "\n".join(part for part in (result.stdout, result.stderr) if part)
-    if result.returncode != 0:
-        tail = "\n".join(output.splitlines()[-40:])
-        raise RuntimeError(
-            f"benchmark command failed with exit code {result.returncode}:\n"
-            f"  {' '.join(command)}\n{tail}"
-        )
-    return output
-
-
 def run_benchmarks(
     formats: Sequence[str],
     runs: int,
@@ -314,24 +282,22 @@ def run_benchmarks(
 ) -> tuple[list[Measurement], dict[tuple[str, str, str], list[str]]]:
     all_measurements: list[Measurement] = []
     commands: dict[tuple[str, str, str], list[str]] = {}
-
     for format_name in formats:
         for implementation in implementations_for_format(format_name):
             raw_dir = output_dir / format_name / implementation_directory(implementation)
-            raw_dir.mkdir(parents=True, exist_ok=True)
             for mode in supported_modes(format_name, implementation):
                 command = build_command(format_name, implementation, mode, zig, optimize)
                 commands[(format_name, implementation, mode)] = command
-                for run in range(1, runs + 1):
-                    print(f"[{format_name}/{implementation}/{mode}] run {run}/{runs}: {' '.join(command)}", flush=True)
-                    output = run_process(command)
-                    raw_path = raw_dir / f"{mode}-{run:02d}.txt"
-                    raw_path.write_text(output, encoding="utf-8")
-                    parsed = parse_output(output, format_name, mode, run)
-                    validate_measurements(parsed, format_name, implementation, mode)
-                    all_measurements.extend(parsed)
-                    print(f"  parsed {len(parsed)} measurements -> {raw_path}", flush=True)
-
+                collected = run_repetitions(
+                    label=f"{format_name}/{implementation}/{mode}",
+                    command=command,
+                    raw_dir=raw_dir,
+                    stem=mode,
+                    runs=runs,
+                    parse=lambda out, run, f=format_name, m=mode: parse_output(out, f, m, run),
+                    validate=lambda meas, f=format_name, i=implementation, m=mode: validate_measurements(meas, f, i, m),
+                )
+                all_measurements.extend(cast(list[Measurement], collected))
     return all_measurements, commands
 
 
