@@ -2,7 +2,7 @@
 zig = "0.16.0"
 
 [tasks.fmt]
-run = "zig fmt --check src/ build.zig"
+run = "zig fmt src/ build.zig build.zig.zon"
 
 [tasks.build]
 run = "zig build"

@@ -336,9 +336,10 @@ def build_command(
     if format_name == "json":
         if implementation == "jsonz":
             step, build_args = "bench-json-jsonz", []
+        elif implementation == "std.json":
+            step, build_args = "bench-json-std", []
         else:
-            step = "bench-json"
-            build_args = [f"-Dimplementation={implementation_argument(implementation)}"]
+            step, build_args = "bench-json", []
     else:
         step = {
             "serde": "bench-msgpack-serde",
