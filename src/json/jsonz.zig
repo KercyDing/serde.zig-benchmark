@@ -1,17 +1,18 @@
 const std = @import("std");
 const jsonz = @import("jsonz");
 const bench = @import("bench.zig");
-const dynamic = @import("dynamic.zig");
 
 const Adapter = struct {
     pub const name = "jsonz";
     pub const supports_arbitrary = true;
-    pub const Arbitrary = dynamic.Value;
+    pub const Arbitrary = jsonz.Document;
 
     pub fn decode(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {
+        if (T == Arbitrary) return jsonz.parse(input, .{});
         return jsonz.fromSlice(T, allocator, input, .{ .ignore_unknown_fields = true });
     }
     pub fn encode(allocator: std.mem.Allocator, value: anytype) ![]u8 {
+        if (@TypeOf(value) == Arbitrary) return jsonz.toSliceValue(allocator, value.root(), .{});
         return jsonz.toSlice(allocator, value, .{});
     }
 };

@@ -116,14 +116,6 @@ def selected_values(value: str, choices: Sequence[str], name: str) -> tuple[str,
     return (value,)
 
 
-def serde_version() -> str:
-    """Read the pinned serde.zig version from its package hash."""
-    root_zon = (ROOT / "build.zig.zon").read_text(encoding="utf-8")
-    if match := re.search(r'\.serde\s*=\s*\.\{.*?\.hash\s*=\s*"serde-([0-9]+(?:\.[0-9]+)*)-', root_zon, re.DOTALL):
-        return f"v{match.group(1)}"
-    return "unknown"
-
-
 ALL_DATASETS = (
     "canada.json",
     "citm_catalog.json",
@@ -483,7 +475,7 @@ def write_markdown(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
         "# zig-serde-bench results",
         "",
         (
-            f"serde.zig {serde_version()} · median of {runs} process run(s). "
+            f"Median of {runs} process run(s). "
             "Throughput is computed from the median `ms/op` and the measured payload "
             "(encoded output bytes when reported, otherwise input bytes)."
         ),
@@ -697,7 +689,7 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
 
     body = "\n".join(sections)
     note = (
-        f"Median of {runs} process run(s) · serde.zig {serde_version()} · "
+        f"Median of {runs} process run(s) · "
         "timed path excludes file loading and cleanup."
     )
     html = f"""<!doctype html>
@@ -776,7 +768,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         metadata = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "project_root": str(ROOT),
-            "serde": serde_version(),
             "python": platform.python_version(),
             "platform": platform.platform(),
             "runs": args.runs,
