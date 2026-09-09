@@ -1,4 +1,4 @@
-"""Run the real-world serde.zig benchmark and open an interactive results page.
+"""Run zig-serde-bench and open the interactive result pages.
 
 Two wire formats (JSON and MessagePack) are measured across four user tasks,
 each run by the library implementations that support it:
@@ -483,7 +483,7 @@ def write_markdown(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
     }
 
     lines = [
-        "# serde.zig benchmark results",
+        "# zig-serde-bench results",
         "",
         (
             f"serde.zig {serde_version()} · median of {runs} process run(s). "
@@ -707,7 +707,7 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>serde.zig benchmark</title>
+<title>zig-serde-bench</title>
 <script src="{HIGHCHARTS_CDN}highcharts.js"></script>
 <script src="{HIGHCHARTS_CDN}modules/exporting.js"></script>
 <script src="{HIGHCHARTS_CDN}modules/offline-exporting.js"></script>
@@ -728,7 +728,7 @@ def write_html_page(path: Path, rows: Sequence[SummaryRow], runs: int) -> None:
 </head>
 <body>
 <header>
-  <h1>serde.zig real-world benchmark</h1>
+  <h1>zig-serde-bench</h1>
   <p>{note}</p>
 </header>
 {body}

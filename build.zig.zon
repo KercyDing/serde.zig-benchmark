@@ -1,8 +1,8 @@
 .{
-    .name = .benchmarks,
+    .name = .zig_serde_bench,
     .version = "0.0.1",
-    .fingerprint = 0x41bc1c58c2f47e93,
-    .minimum_zig_version = "0.15.2",
+    .fingerprint = 0xf732bec3dc1f9c19,
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .serde = .{
             .url = "https://github.com/OrlovEvgeny/serde.zig/archive/f9172b5a11a3f74ee022212cbd7928426bc1c630.tar.gz",
