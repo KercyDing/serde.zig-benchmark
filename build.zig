@@ -18,9 +18,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const jsonz = b.dependency("jsonz", .{ .target = target, .optimize = optimize });
 
     const mod_json_bench = b.createModule(.{
-        .root_source_file = b.path("src/json.zig"),
+        .root_source_file = b.path("src/json/serde.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -31,6 +32,12 @@ pub fn build(b: *std.Build) void {
     json_bench.use_llvm = true;
     json_bench.root_module.link_libc = true;
     b.installArtifact(json_bench);
+
+    const mod_jsonz_bench = b.createModule(.{ .root_source_file = b.path("src/json/jsonz.zig"), .target = target, .optimize = optimize, .imports = &.{.{ .name = "jsonz", .module = jsonz.module("jsonz") }} });
+    const jsonz_bench = b.addExecutable(.{ .name = "jsonz_bench", .root_module = mod_jsonz_bench });
+    jsonz_bench.use_llvm = true;
+    jsonz_bench.root_module.link_libc = true;
+    b.installArtifact(jsonz_bench);
 
     // One executable per MessagePack library: each benchmarks the tasks its
     // Each library completes only the tasks its own API supports,
@@ -79,6 +86,10 @@ pub fn build(b: *std.Build) void {
     const run_json = b.addRunArtifact(json_bench);
     run_json.addArg(@tagName(implementation));
     json_step.dependOn(&run_json.step);
+
+    const jsonz_step = b.step("bench-json-jsonz", "Run jsonz JSON task benchmarks");
+    const run_jsonz = b.addRunArtifact(jsonz_bench);
+    jsonz_step.dependOn(&run_jsonz.step);
 
     const msgpack_serde_step = b.step("bench-msgpack-serde", "Run serde.zig MessagePack task benchmarks");
     const run_msgpack_serde = b.addRunArtifact(msgpack_serde_bench);

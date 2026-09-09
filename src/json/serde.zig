@@ -164,7 +164,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
     defer args.deinit();
     _ = args.skip();
     const implementation = parseImplementation(&args) catch return error.InvalidArguments;
+    return run(init, implementation);
+}
 
+pub fn run(_: std.process.Init.Minimal, implementation: Implementation) !void {
     std.debug.print("JSON benchmark\n", .{});
     std.debug.print("data: data/json, input read and cleanup excluded\n", .{});
 
@@ -201,7 +204,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     }
 }
 
-const Implementation = enum { serde, std, all };
+pub const Implementation = enum { serde, std, all };
 
 fn parseImplementation(args: *std.process.Args.Iterator) !Implementation {
     const argument = args.next() orelse return .all;
