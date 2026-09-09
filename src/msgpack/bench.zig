@@ -11,7 +11,6 @@ pub fn run(comptime Adapter: type, init: std.process.Init.Minimal) !void {
     std.debug.print("data: data/msgpack, input read and cleanup excluded\n", .{});
     for (shared.datasets) |dataset| {
         if (!Adapter.supports_arbitrary and !shared.isKnownDataset(dataset)) continue;
-        if (!Adapter.supports_canada and std.mem.eql(u8, dataset, "canada.json")) continue;
         var path_buffer: [64]u8 = undefined;
         const stem = dataset[0 .. dataset.len - ".json".len];
         const path = try std.fmt.bufPrint(&path_buffer, "data/msgpack/{s}.msgpack", .{stem});
@@ -20,7 +19,7 @@ pub fn run(comptime Adapter: type, init: std.process.Init.Minimal) !void {
         const repeats = shared.repeatCount(input.len);
         std.debug.print("\n{s} ({d} bytes, {d} repeats)\n", .{ dataset, input.len, repeats });
         if (comptime Adapter.supports_known) {
-            if (shared.isKnownDataset(dataset)) {
+            if (shared.isKnownDataset(dataset) and (Adapter.supports_canada or !std.mem.eql(u8, dataset, "canada.json"))) {
                 try runKnown(Adapter, dataset, input, repeats, false);
                 try runKnown(Adapter, dataset, input, repeats, true);
             }

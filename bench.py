@@ -158,8 +158,8 @@ ALL_TOKENS = tuple(token for _, token in TASKS)
 # every token.
 MSGPACK_TOKENS = {
     "serde": ALL_TOKENS,
-    "msgpack.zig": ("known-encode", "known-decode"),
-    "zig-msgpack": ("arbitrary-decode", "transform"),
+    "msgpack.zig": ALL_TOKENS,
+    "zig-msgpack": ALL_TOKENS,
 }
 JSON_TOKENS = {"serde": ALL_TOKENS, "jsonz": ALL_TOKENS, "std.json": ALL_TOKENS}
 
@@ -201,14 +201,11 @@ def supported_tokens(format_name: str, implementation: str) -> tuple[str, ...]:
 def token_datasets(format_name: str, implementation: str, token: str) -> frozenset[str]:
     """Datasets where an (implementation, token) pair produces a metric.
 
-    Known-schema tasks cover KNOWN_DATASETS, except msgpack.zig which cannot
-    decode canada.json; the remaining tasks cover every dataset.
+    Known-schema tasks cover KNOWN_DATASETS; the remaining tasks cover every
+    dataset.
     """
     if token in ("known-encode", "known-decode"):
-        datasets = KNOWN_DATASETS
-        if implementation == "msgpack.zig":
-            datasets = datasets - {"canada.json"}
-        return datasets
+        return KNOWN_DATASETS
     return frozenset(ALL_DATASETS)
 
 
