@@ -90,7 +90,7 @@ pub fn build(b: *std.Build) void {
     msgpack_zigmp_bench.root_module.link_libc = true;
     b.installArtifact(msgpack_zigmp_bench);
 
-    const json_step = b.step("bench-json", "Run JSON benchmarks");
+    const json_step = b.step("bench-json-serde", "Run serde.zig JSON task benchmarks");
     const run_json = b.addRunArtifact(json_bench);
     json_step.dependOn(&run_json.step);
 
@@ -106,7 +106,7 @@ pub fn build(b: *std.Build) void {
     const run_msgpack_serde = b.addRunArtifact(msgpack_serde_bench);
     msgpack_serde_step.dependOn(&run_msgpack_serde.step);
 
-    const msgpack_lal_step = b.step("bench-msgpack-msgpack-zig", "Run msgpack.zig (lalinsky) MessagePack task benchmarks");
+    const msgpack_lal_step = b.step("bench-msgpack-zig", "Run msgpack.zig (lalinsky) MessagePack task benchmarks");
     const run_msgpack_lal = b.addRunArtifact(msgpack_lal_bench);
     msgpack_lal_step.dependOn(&run_msgpack_lal.step);
 

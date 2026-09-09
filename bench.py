@@ -153,7 +153,11 @@ MSGPACK_TOKENS = {
     "msgpack.zig": ALL_TOKENS,
     "zig-msgpack": ALL_TOKENS,
 }
-JSON_TOKENS = {"serde": ALL_TOKENS, "jsonz": ALL_TOKENS, "std.json": ALL_TOKENS}
+JSON_TOKENS = {
+    "serde": ALL_TOKENS,
+    "jsonz": ALL_TOKENS,
+    "std.json": ALL_TOKENS,
+}
 
 
 def implementations_for_format(format_name: str) -> tuple[str, ...]:
@@ -328,11 +332,11 @@ def build_command(
         elif implementation == "std.json":
             step, build_args = "bench-json-std", []
         else:
-            step, build_args = "bench-json", []
+            step, build_args = "bench-json-serde", []
     else:
         step = {
             "serde": "bench-msgpack-serde",
-            "msgpack.zig": "bench-msgpack-msgpack-zig",
+            "msgpack.zig": "bench-msgpack-zig",
             "zig-msgpack": "bench-msgpack-zig-msgpack",
         }[implementation]
         build_args = []

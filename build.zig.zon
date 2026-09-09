@@ -5,15 +5,15 @@
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .serde = .{
-            .url = "https://github.com/OrlovEvgeny/serde.zig/archive/f9172b5a11a3f74ee022212cbd7928426bc1c630.tar.gz",
-            .hash = "serde-1.1.0-1DszT1aLEAD-3qLPzBLlFt3TaIMWUuUD7aDdjxkuEKsd",
+            .url = "git+https://github.com/OrlovEvgeny/serde.zig?ref=master#ee707016ee80bf2caddbfa3e1498c5699d287ba3",
+            .hash = "serde-1.1.0-1DszT1I_EgAdQQ0iYBWv7CN92g-m4PiH2_Hr7xV-rUOy",
         },
         .msgpack = .{
-            .url = "https://github.com/lalinsky/msgpack.zig/archive/refs/heads/master.tar.gz",
+            .url = "git+https://github.com/lalinsky/msgpack.zig?ref=v0.9.0#451da35e104935d07fa46aa7a80499097929966f",
             .hash = "msgpack-0.9.0-ZOu9PEGgAgDvbGsCCi8OPV-n25bHqJniaZYM45BMJT4a",
         },
         .zig_msgpack = .{
-            .url = "https://github.com/zigcc/zig-msgpack/archive/refs/tags/0.0.17.tar.gz",
+            .url = "git+https://github.com/zigcc/zig-msgpack?ref=0.0.17#962cc094508f391a56f3bcfb059331feb2f7a233",
             .hash = "zig_msgpack-0.0.14-evvueL5SBQACmim6j6klQ9wWIIG_UxGlPvVYdiNy0KT8",
         },
         .jsonz = .{

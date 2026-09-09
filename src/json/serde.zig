@@ -126,7 +126,12 @@ const Adapter = struct {
     pub const Arbitrary = Value;
 
     pub fn decode(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {
-        return serde.json.fromSlice(T, allocator, input);
+        if (T == Arbitrary) return serde.json.fromSlice(T, allocator, input);
+        // Borrowed strings cannot represent decoded JSON escapes. Match the
+        // zero-copy path where valid and retain an owning fallback otherwise.
+        if (std.mem.indexOfScalar(u8, input, '\\') != null)
+            return serde.json.fromSlice(T, allocator, input);
+        return serde.json.fromSliceBorrowed(T, allocator, input);
     }
     pub fn encode(allocator: std.mem.Allocator, value: anytype) ![]u8 {
         return serde.json.toSlice(allocator, value);
