@@ -1,11 +1,12 @@
 const std = @import("std");
 const jsonz = @import("jsonz");
 const bench = @import("bench.zig");
+const dynamic = @import("dynamic.zig");
 
 const Adapter = struct {
     pub const name = "jsonz";
-    pub const supports_arbitrary = false;
-    pub const Arbitrary = void;
+    pub const supports_arbitrary = true;
+    pub const Arbitrary = dynamic.Value;
 
     pub fn decode(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {
         return jsonz.fromSlice(T, allocator, input, .{ .ignore_unknown_fields = true });

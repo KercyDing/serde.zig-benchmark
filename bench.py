@@ -161,7 +161,7 @@ MSGPACK_TOKENS = {
     "msgpack.zig": ("known-encode", "known-decode"),
     "zig-msgpack": ("arbitrary-decode", "transform"),
 }
-JSON_TOKENS = {"serde": ALL_TOKENS, "jsonz": ("known-encode", "known-decode"), "std.json": ALL_TOKENS}
+JSON_TOKENS = {"serde": ALL_TOKENS, "jsonz": ALL_TOKENS, "std.json": ALL_TOKENS}
 
 
 def implementations_for_format(format_name: str) -> tuple[str, ...]:
