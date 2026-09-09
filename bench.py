@@ -12,20 +12,20 @@ The Zig programs already perform warmup and repeat each fixture according to
 its size and print one task-tagged metric line per dataset. This driver runs
 every format/implementation combination in separate processes, keeps the raw
 text for auditability, aggregates process runs by median, and renders one web
-page (``results/index.html``) with Highcharts column charts — for each task two
-side-by-side charts: throughput in GB/s and rate in ops/s. Then it opens the
-page in your browser.
+page per format (``results/json/index.html`` and
+``results/msgpack/index.html``) with Highcharts column charts — for each task
+two side-by-side charts: throughput in GB/s and rate in ops/s. Then it opens
+the generated pages in your browser.
 No Python chart library is needed; the page loads Highcharts from a CDN (first
 open requires network).
 
 Typical use::
 
     uv run bench.py               # run all, write html + csv + md, open page
-    uv run bench.py --output csv  # only summary.csv (or --output md)
+    uv run bench.py --no-build    # regenerate reports from existing results
 
 Raw per-process output and ``measurements.json`` are kept under the result
-directory (``results``); the page and the optional CSV/Markdown exports are
-derived from them.
+format directory; the HTML, CSV, and Markdown reports are derived from them.
 """
 
 import argparse
@@ -755,12 +755,9 @@ def parser() -> argparse.ArgumentParser:
         help="independent process runs per format (default: 10)",
     )
     result.add_argument(
-        "--output",
-        dest="exports",
-        action="append",
-        choices=("csv", "md"),
-        default=None,
-        help="write only the chosen summary file(s), without the page (repeatable)",
+        "--no-build",
+        action="store_true",
+        help="regenerate HTML, CSV, and Markdown from existing measurements",
     )
     return result
 
@@ -773,59 +770,56 @@ def main(argv: Sequence[str] | None = None) -> int:
     zig = os.environ.get("ZIG", "zig")
     optimize = "ReleaseFast"
 
-    measurements, commands = run_benchmarks(formats, args.runs, zig, optimize, output_dir)
-    metadata = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "project_root": str(ROOT),
-        "serde": serde_version(),
-        "python": platform.python_version(),
-        "platform": platform.platform(),
-        "runs": args.runs,
-        "commands": {
-            f"{format_name}/{implementation}": command
-            for (format_name, implementation), command in commands.items()
-        },
-    }
-    runs = args.runs
+    if args.no_build:
+        measurements: list[Measurement] = []
+        commands: dict[tuple[str, str], list[str]] = {}
+        metadata: dict[str, object] = {}
+    else:
+        measurements, commands = run_benchmarks(formats, args.runs, zig, optimize, output_dir)
+        metadata = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "project_root": str(ROOT),
+            "serde": serde_version(),
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+            "runs": args.runs,
+            "commands": {
+                f"{format_name}/{implementation}": command
+                for (format_name, implementation), command in commands.items()
+            },
+        }
 
     written: list[Path] = []
-    if args.exports:
-        want_csv = "csv" in args.exports
-        want_md = "md" in args.exports
-        want_page = False
-    else:
-        want_csv, want_md, want_page = True, True, True
-
     open_pages: list[Path] = []
     for format_name in formats:
         format_dir = output_dir / format_name
         format_dir.mkdir(parents=True, exist_ok=True)
-        format_measurements = [item for item in measurements if item.format == format_name]
-        format_summary = aggregate(format_measurements)
-        payload = {
-            "metadata": metadata | {"format": format_name},
-            "measurements": [
-                asdict(item) | {"measured_bytes": item.measured_bytes}
-                for item in format_measurements
-            ],
-            "summary": format_summary,
-        }
-        (format_dir / "measurements.json").write_text(
-            json.dumps(payload, indent=2) + "\n", encoding="utf-8"
-        )
-        if want_csv:
-            path = format_dir / "summary.csv"
-            write_csv(path, format_summary)
-            written.append(path)
-        if want_md:
-            path = format_dir / "summary.md"
-            write_markdown(path, format_summary, runs)
-            written.append(path)
-        if want_page:
-            page = format_dir / "index.html"
-            write_html_page(page, format_summary, runs)
-            written.append(page)
-            open_pages.append(page)
+        if args.no_build:
+            format_summary, runs = load_summary(format_dir / "measurements.json")
+        else:
+            runs = args.runs
+            format_measurements = [item for item in measurements if item.format == format_name]
+            format_summary = aggregate(format_measurements)
+            payload = {
+                "metadata": metadata | {"format": format_name},
+                "measurements": [
+                    asdict(item) | {"measured_bytes": item.measured_bytes}
+                    for item in format_measurements
+                ],
+                "summary": format_summary,
+            }
+            (format_dir / "measurements.json").write_text(
+                json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+            )
+
+        csv_path = format_dir / "summary.csv"
+        markdown_path = format_dir / "summary.md"
+        page = format_dir / "index.html"
+        write_csv(csv_path, format_summary)
+        write_markdown(markdown_path, format_summary, runs)
+        write_html_page(page, format_summary, runs)
+        written.extend((csv_path, markdown_path, page))
+        open_pages.append(page)
 
     for path in written:
         print(f"wrote {path}")

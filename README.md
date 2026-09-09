@@ -19,9 +19,8 @@ mise install
 
 ### `bench.py`
 
-`uv run bench.py` runs every format, writes `index.html`,
-`summary.csv`, and `summary.md` to `results/`, then opens the
-page in your browser.
+`uv run bench.py` runs every format, writes `index.html`, `summary.csv`, and
+`summary.md` below `results/json/` and `results/msgpack/`, then opens both pages.
 
 Results are grouped by user task (encode known data, decode known data, load
 arbitrary data, transform data) per format; each task only includes the
@@ -35,6 +34,6 @@ Highcharts from a CDN, so the first open needs network.
 | --- | --- | --- |
 | `bench.py` | `--format json\|msgpack\|all` | Select input format(s). |
 | `bench.py` | `--runs N` | Independent process runs (default: 10). |
-| `bench.py` | `--output csv\|md` | Write only selected export(s); repeatable. |
+| `bench.py` | `--no-build` | Regenerate HTML, CSV, and Markdown from existing results. |
 
 The Zig version is pinned in `mise.toml` (0.16.0).
