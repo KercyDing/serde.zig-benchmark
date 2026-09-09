@@ -30,13 +30,11 @@ libraries that can complete it with their native API. It builds with
 Highcharts from a CDN, so the first open needs network.
 
 ## Options
-## Options
 
 | Script | Option | Description |
 | --- | --- | --- |
 | `bench.py` | `--format json\|msgpack\|all` | Select input format(s). |
 | `bench.py` | `--runs N` | Independent process runs (default: 10). |
 | `bench.py` | `--output csv\|md` | Write only selected export(s); repeatable. |
-| `bench-parallel.py` | `--thread N` | Maximum worker threads (default: all logical CPUs). |
 
 The Zig version is pinned in `mise.toml` (0.16.0).
