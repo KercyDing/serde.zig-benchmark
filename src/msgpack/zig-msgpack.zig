@@ -1,13 +1,13 @@
 const std = @import("std");
 const zig_msgpack = @import("zig_msgpack");
-const common = @import("shared.zig");
+const shared = @import("shared.zig");
 
 const Allocator = std.mem.Allocator;
-const input_allocator = common.input_allocator;
-const data_limit = common.data_limit;
-const datasets = common.datasets;
-const repeatCount = common.repeatCount;
-const nowNanoseconds = common.nowNanoseconds;
+const input_allocator = shared.input_allocator;
+const data_limit = shared.data_limit;
+const datasets = shared.datasets;
+const repeatCount = shared.repeatCount;
+const nowNanoseconds = shared.nowNanoseconds;
 
 // ---------------------------------------------------------------------------
 // zig-msgpack (zigcc) — arbitrary-data tasks.
@@ -108,7 +108,8 @@ fn runRoundtrip(name: []const u8, input: []const u8, repeats: usize) !void {
 }
 
 pub fn main(init: std.process.Init.Minimal) !void {
-    var args = std.process.Args.Iterator.init(init.args);
+    var args = try std.process.Args.Iterator.initAllocator(init.args, input_allocator);
+    defer args.deinit();
     _ = args.skip();
     if (args.next() != null) return error.InvalidArguments;
 

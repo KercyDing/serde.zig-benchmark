@@ -1,19 +1,19 @@
 const std = @import("std");
 const serde = @import("serde");
-const common = @import("shared.zig");
+const shared = @import("shared.zig");
 
 const Allocator = std.mem.Allocator;
-const input_allocator = common.input_allocator;
-const data_limit = common.data_limit;
-const datasets = common.datasets;
-const repeatCount = common.repeatCount;
-const isKnownDataset = common.isKnownDataset;
-const isTypedDataset = common.isTypedDataset;
-const nowNanoseconds = common.nowNanoseconds;
-const CanadaDocument = common.CanadaDocument;
-const GithubEvent = common.GithubEvent;
-const Poem = common.Poem;
-const TwitterDocument = common.TwitterDocument;
+const input_allocator = shared.input_allocator;
+const data_limit = shared.data_limit;
+const datasets = shared.datasets;
+const repeatCount = shared.repeatCount;
+const isKnownDataset = shared.isKnownDataset;
+const isTypedDataset = shared.isTypedDataset;
+const nowNanoseconds = shared.nowNanoseconds;
+const CanadaDocument = shared.CanadaDocument;
+const GithubEvent = shared.GithubEvent;
+const Poem = shared.Poem;
+const TwitterDocument = shared.TwitterDocument;
 
 const GenericField = struct {
     key: []const u8,
@@ -84,7 +84,8 @@ pub const GenericValue = union(enum) {
 };
 
 pub fn main(init: std.process.Init.Minimal) !void {
-    var args = std.process.Args.Iterator.init(init.args);
+    var args = try std.process.Args.Iterator.initAllocator(init.args, input_allocator);
+    defer args.deinit();
     _ = args.skip();
     if (args.next() != null) return error.InvalidArguments;
 
