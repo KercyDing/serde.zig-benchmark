@@ -28,13 +28,16 @@ pub fn run(comptime Adapter: type, init: std.process.Init.Minimal) !void {
             try runKnown(Adapter, dataset, input, repeats, true);
         }
         if (comptime Adapter.supports_arbitrary) {
-            try decode(Adapter, Adapter.Arbitrary, "arbitrary-decode", input, repeats);
-            try transform(Adapter, Adapter.Arbitrary, input, repeats);
+            if (!std.mem.eql(u8, dataset, "small.json")) {
+                try decode(Adapter, Adapter.Arbitrary, "arbitrary-decode", input, repeats);
+                try transform(Adapter, Adapter.Arbitrary, input, repeats);
+            }
         }
     }
 }
 
 fn runKnown(comptime Adapter: type, dataset: []const u8, input: []const u8, repeats: usize, encode_value: bool) !void {
+    if (std.mem.eql(u8, dataset, "small.json")) return known(Adapter, shared.SmallDocument, input, repeats, encode_value);
     if (std.mem.eql(u8, dataset, "canada.json")) return known(Adapter, shared.CanadaDocument, input, repeats, encode_value);
     if (std.mem.eql(u8, dataset, "github_events.json")) return known(Adapter, []const shared.GithubEvent, input, repeats, encode_value);
     if (std.mem.eql(u8, dataset, "poet.json")) return known(Adapter, []const shared.Poem, input, repeats, encode_value);

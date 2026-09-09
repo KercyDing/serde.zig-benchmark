@@ -117,6 +117,7 @@ def selected_values(value: str, choices: Sequence[str], name: str) -> tuple[str,
 
 
 ALL_DATASETS = (
+    "small.json",
     "canada.json",
     "citm_catalog.json",
     "fgo.json",
@@ -129,15 +130,13 @@ ALL_DATASETS = (
     "twitterescaped.json",
 )
 KNOWN_DATASETS = frozenset(
-    {"canada.json", "github_events.json", "poet.json", "twitter.json", "twitterescaped.json"}
+    {"small.json", "canada.json", "github_events.json", "poet.json", "twitter.json", "twitterescaped.json"}
 )
+ARBITRARY_DATASETS = frozenset(ALL_DATASETS) - {"small.json"}
 FORMATS = ("json", "msgpack")
 FORMAT_LABELS = {"json": "JSON", "msgpack": "MessagePack"}
 JSON_IMPLEMENTATIONS = ("serde", "jsonz", "std.json")
 MSGPACK_IMPLEMENTATIONS = ("serde", "msgpack.zig", "zig-msgpack")
-# The four user tasks as (task label, metric token). Known-schema tasks
-# (known-encode/known-decode) run only on KNOWN_DATASETS; the others run on
-# every dataset.
 TASKS = (
     ("Encode known data", "known-encode"),
     ("Decode known data", "known-decode"),
@@ -197,12 +196,12 @@ def supported_tokens(format_name: str, implementation: str) -> tuple[str, ...]:
 def token_datasets(format_name: str, implementation: str, token: str) -> frozenset[str]:
     """Datasets where an (implementation, token) pair produces a metric.
 
-    Known-schema tasks cover KNOWN_DATASETS; the remaining tasks cover every
-    dataset.
+    Known-schema tasks cover their applicable fixtures; the remaining tasks
+    cover every dataset except the typed-only tiny fixture.
     """
     if token in ("known-encode", "known-decode"):
         return KNOWN_DATASETS
-    return frozenset(ALL_DATASETS)
+    return ARBITRARY_DATASETS
 
 
 DATASET_RE = re.compile(
