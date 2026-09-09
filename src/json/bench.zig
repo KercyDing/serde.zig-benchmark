@@ -49,16 +49,18 @@ fn known(comptime Adapter: type, comptime T: type, input: []const u8, repeats: u
 fn decode(comptime Adapter: type, comptime T: type, comptime task: []const u8, input: []const u8, repeats: usize) !void {
     var warmup_arena = std.heap.ArenaAllocator.init(shared.input_allocator);
     defer warmup_arena.deinit();
-    _ = try Adapter.decode(T, warmup_arena.allocator(), input);
+    var warmup = try Adapter.decode(T, warmup_arena.allocator(), input);
+    deinitValue(Adapter, &warmup);
 
     var elapsed: u64 = 0;
     for (0..repeats) |_| {
         var arena = std.heap.ArenaAllocator.init(shared.input_allocator);
         defer arena.deinit();
         const start = shared.nowNanoseconds();
-        const value = try Adapter.decode(T, arena.allocator(), input);
+        var value = try Adapter.decode(T, arena.allocator(), input);
         elapsed += @max(shared.nowNanoseconds() - start, 1);
         std.mem.doNotOptimizeAway(value);
+        deinitValue(Adapter, &value);
     }
     report(Adapter.name ++ " " ++ task, input.len, repeats, elapsed, null);
 }
@@ -66,7 +68,8 @@ fn decode(comptime Adapter: type, comptime T: type, comptime task: []const u8, i
 fn encode(comptime Adapter: type, comptime T: type, input: []const u8, repeats: usize) !void {
     var fixture_arena = std.heap.ArenaAllocator.init(shared.input_allocator);
     defer fixture_arena.deinit();
-    const value = try Adapter.decode(T, fixture_arena.allocator(), input);
+    var value = try Adapter.decode(T, fixture_arena.allocator(), input);
+    defer deinitValue(Adapter, &value);
     const warmup = try Adapter.encode(shared.input_allocator, value);
     defer shared.input_allocator.free(warmup);
 
@@ -87,13 +90,18 @@ fn transform(comptime Adapter: type, comptime T: type, input: []const u8, repeat
         var arena = std.heap.ArenaAllocator.init(shared.input_allocator);
         defer arena.deinit();
         const start = shared.nowNanoseconds();
-        const value = try Adapter.decode(T, arena.allocator(), input);
+        var value = try Adapter.decode(T, arena.allocator(), input);
+        defer deinitValue(Adapter, &value);
         const output = try Adapter.encode(shared.input_allocator, value);
         elapsed += @max(shared.nowNanoseconds() - start, 1);
         std.mem.doNotOptimizeAway(output.ptr);
         shared.input_allocator.free(output);
     }
     report(Adapter.name ++ " transform", input.len, repeats, elapsed, null);
+}
+
+fn deinitValue(comptime Adapter: type, value: anytype) void {
+    if (comptime @hasDecl(Adapter, "deinit")) Adapter.deinit(value);
 }
 
 fn report(label: []const u8, bytes: usize, repeats: usize, elapsed: u64, output: ?usize) void {

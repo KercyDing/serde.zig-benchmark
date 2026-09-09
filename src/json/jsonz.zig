@@ -5,15 +5,20 @@ const bench = @import("bench.zig");
 const Adapter = struct {
     pub const name = "jsonz";
     pub const supports_arbitrary = true;
-    pub const Arbitrary = jsonz.Document;
+    pub const Arbitrary = jsonz.dom.Document;
 
     pub fn decode(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {
-        if (T == Arbitrary) return jsonz.parse(input, .{});
-        return jsonz.fromSlice(T, allocator, input, .{ .ignore_unknown_fields = true });
+        if (T == Arbitrary) return jsonz.dom.parse(input, .{});
+        return jsonz.typed.parseBorrowed(T, allocator, input, .{ .ignore_unknown_fields = true });
     }
+
     pub fn encode(allocator: std.mem.Allocator, value: anytype) ![]u8 {
-        if (@TypeOf(value) == Arbitrary) return jsonz.toSliceValue(allocator, value.root(), .{});
-        return jsonz.toSlice(allocator, value, .{});
+        if (@TypeOf(value) == Arbitrary) return value.toSlice(allocator, .{});
+        return jsonz.typed.toSlice(allocator, value, .{});
+    }
+
+    pub fn deinit(value: anytype) void {
+        if (comptime @TypeOf(value.*) == Arbitrary) value.deinit();
     }
 };
 
