@@ -17,8 +17,8 @@
             .hash = "zig_msgpack-0.0.14-evvueL5SBQACmim6j6klQ9wWIIG_UxGlPvVYdiNy0KT8",
         },
         .jsonz = .{
-            .url = "git+https://github.com/KercyDing/jsonz?ref=v0.2.2#ab48eaa6d25f8baa9fd2f0129bc29537ea0b5a71",
-            .hash = "jsonz-0.2.2-DD_xnm_BFgCvqyg3kC9xzDcbJZTWVXbqitz0se_BdSBd",
+            .url = "git+https://github.com/KercyDing/jsonz?ref=v0.4.1#53bb9b056942bf1f11400e969f6dc5ea83201315",
+            .hash = "jsonz-0.4.1-DD_xnl1jBAAhDfKcIj9dnyawVHGI-NS0RjnQYLKGmr1I",
         },
     },
     .paths = .{
