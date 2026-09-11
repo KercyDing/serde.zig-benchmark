@@ -8,14 +8,6 @@
             .url = "git+https://github.com/OrlovEvgeny/serde.zig?ref=master#ee707016ee80bf2caddbfa3e1498c5699d287ba3",
             .hash = "serde-1.1.0-1DszT1I_EgAdQQ0iYBWv7CN92g-m4PiH2_Hr7xV-rUOy",
         },
-        .msgpack = .{
-            .url = "git+https://github.com/lalinsky/msgpack.zig?ref=v0.9.0#451da35e104935d07fa46aa7a80499097929966f",
-            .hash = "msgpack-0.9.0-ZOu9PEGgAgDvbGsCCi8OPV-n25bHqJniaZYM45BMJT4a",
-        },
-        .zig_msgpack = .{
-            .url = "git+https://github.com/zigcc/zig-msgpack?ref=0.0.17#962cc094508f391a56f3bcfb059331feb2f7a233",
-            .hash = "zig_msgpack-0.0.14-evvueL5SBQACmim6j6klQ9wWIIG_UxGlPvVYdiNy0KT8",
-        },
         .jsonz = .{
             .url = "git+https://github.com/KercyDing/jsonz?ref=v0.4.1#53bb9b056942bf1f11400e969f6dc5ea83201315",
             .hash = "jsonz-0.4.1-DD_xnl1jBAAhDfKcIj9dnyawVHGI-NS0RjnQYLKGmr1I",
@@ -26,6 +18,5 @@
         "build.zig.zon",
         "bench",
         "data/json",
-        "data/msgpack",
     },
 }
