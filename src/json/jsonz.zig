@@ -8,7 +8,7 @@ const Adapter = struct {
     pub const Arbitrary = jsonz.dom.Document;
 
     pub fn decode(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {
-        if (T == Arbitrary) return jsonz.dom.parse(input, .{});
+        if (T == Arbitrary) return jsonz.dom.parse(allocator, input, .{});
         return jsonz.typed.parseBorrowed(T, allocator, input, .{ .ignore_unknown_fields = true });
     }
 
