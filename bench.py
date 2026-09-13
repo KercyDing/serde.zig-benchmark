@@ -129,6 +129,22 @@ def run_concurrently(
     return outputs
 
 
+def run_warmup(command: Sequence[str]) -> None:
+    """Run one implementation once to populate build/runtime caches."""
+    completed = subprocess.run(
+        list(command),
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if completed.returncode != 0:
+        output = completed.stdout.decode(errors="replace")
+        raise RuntimeError(
+            f"warmup failed with exit code {completed.returncode}:\n{output}"
+        )
+
+
 ALL_DATASETS = (
     "small.json",
     "canada.json",
@@ -363,7 +379,8 @@ def run_benchmarks(
     Without ``parallel_limit`` that is a single process per run, as before. With
     it, each run starts ``threads`` processes at once for every count in
     ``thread_counts(parallel_limit)``; the outputs of one run are aggregated into
-    one sample per thread count.
+    one sample per thread count. Implementations are warmed up before each thread
+    count and rotated between runs to reduce order-dependent system noise.
     """
     counts = (1,) if parallel_limit is None else thread_counts(parallel_limit)
     all_measurements: list[Measurement] = []
@@ -372,31 +389,42 @@ def run_benchmarks(
         raw_dir = output_dir / FORMAT / implementation_directory(implementation)
         command = build_command(implementation, zig, optimize)
         commands[(FORMAT, implementation)] = command
-        label = f"{FORMAT}/{implementation}"
-        for threads in counts:
-                for run in range(1, runs + 1):
-                    stem = "tasks" if counts == (1,) else f"tasks-t{threads:02d}"
-                    print(
-                        f"[{label}] run {run}/{runs} at {threads} thread(s): {' '.join(command)}",
-                        flush=True,
-                    )
-                    outputs = run_concurrently(
-                        label=f"{label} t{threads}",
-                        command=command,
-                        threads=threads,
-                        raw_dir=raw_dir,
-                        stem=f"{stem}-{run:02d}",
-                    )
-                    parsed_count = 0
-                    for output in outputs:
-                        parsed = parse_output(output, run)
-                        validate_measurements(parsed, FORMAT, implementation)
-                        all_measurements.extend(replace(item, threads=threads) for item in parsed)
-                        parsed_count += len(parsed)
-                    print(
-                        f"  parsed {parsed_count} measurements at {threads} thread(s)",
-                        flush=True,
-                    )
+    for threads in counts:
+        print(f"=== warmup at {threads} thread(s) ===", flush=True)
+        for implementation in IMPLEMENTATIONS:
+            run_warmup(commands[(FORMAT, implementation)])
+
+        for run in range(1, runs + 1):
+            # Rotate the order each round so no implementation is always first
+            # or last. Keep concurrent processes within one implementation.
+            offset = (run - 1) % len(IMPLEMENTATIONS)
+            order = IMPLEMENTATIONS[offset:] + IMPLEMENTATIONS[:offset]
+            for implementation in order:
+                raw_dir = output_dir / FORMAT / implementation_directory(implementation)
+                command = commands[(FORMAT, implementation)]
+                label = f"{FORMAT}/{implementation}"
+                stem = "tasks" if counts == (1,) else f"tasks-t{threads:02d}"
+                print(
+                    f"[{label}] run {run}/{runs} at {threads} thread(s): {' '.join(command)}",
+                    flush=True,
+                )
+                outputs = run_concurrently(
+                    label=f"{label} t{threads}",
+                    command=command,
+                    threads=threads,
+                    raw_dir=raw_dir,
+                    stem=f"{stem}-{run:02d}",
+                )
+                parsed_count = 0
+                for output in outputs:
+                    parsed = parse_output(output, run)
+                    validate_measurements(parsed, FORMAT, implementation)
+                    all_measurements.extend(replace(item, threads=threads) for item in parsed)
+                    parsed_count += len(parsed)
+                print(
+                    f"  parsed {parsed_count} measurements at {threads} thread(s)",
+                    flush=True,
+                )
     return all_measurements, commands
 
 
